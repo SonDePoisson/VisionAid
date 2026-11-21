@@ -115,6 +115,28 @@ class GuidanceCue:
 
 
 @dataclass
+class SoundCommand:
+    """Ce que le haut-parleur doit jouer, déduit d'une consigne (`audio.director`).
+
+    Calculé une seule fois côté PC, puis rendu à l'identique par le téléphone (Web Audio) et
+    par le rendu hors ligne (WAV).
+    """
+
+    t: float
+    frame_idx: int
+    state: str
+    mode: str  # silent | search | guide | alert | arrived
+    azimuth: float = 0.0  # rad, positif à gauche (direction réelle)
+    azimuth_render: float = 0.0  # rad, après exagération des petits angles
+    distance: float = float("nan")
+    interval_s: float = 1.0  # espacement entre deux notes du guide
+    gain_db: float = 0.0
+    lowpass_hz: float = 20000.0  # assourdissement quand l'objectif est derrière
+    back_gain_db: float = 0.0
+    event: str = ""  # « arrived » : son d'arrivée à jouer une fois
+
+
+@dataclass
 class ImuSample:
     """Échantillon inertiel, repère appareil (W3C : x droite, y haut de l'écran, z vers l'utilisateur)."""
 
@@ -176,6 +198,7 @@ MESSAGE_TYPES: dict[str, type] = {
         Costmap,
         Path,
         GuidanceCue,
+        SoundCommand,
         ImuSample,
         ImuBatch,
         ClockSync,

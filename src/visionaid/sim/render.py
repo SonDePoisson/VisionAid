@@ -28,8 +28,11 @@ def render_episode(
     scale: int = 4,
     fps: int = 10,
     occ_final: np.ndarray | None = None,
+    captions: list[str] | None = None,
 ) -> Path:
-    """Écrit un MP4 : à gauche la vérité terrain, à droite la carte construite par l'agent."""
+    """Écrit un MP4 : à gauche la vérité terrain, à droite la carte construite par l'agent.
+
+    `captions` : une ligne de texte par image, affichée en bas (ex. le son joué)."""
     H, W = world.occ.shape
     gt_occ = world.occ if occ_final is None else occ_final
 
@@ -39,7 +42,7 @@ def render_episode(
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     vw = None
-    for t, x, y, hd, st, pts, state, origin in frames:
+    for fi, (t, x, y, hd, st, pts, state, origin) in enumerate(frames):
         gt = np.full((H, W, 3), 255, np.uint8)
         gt[gt_occ] = (40, 40, 40)
         gt = cv2.resize(gt, (W * scale, H * scale), interpolation=cv2.INTER_NEAREST)
@@ -78,6 +81,18 @@ def render_episode(
             (0, 0, 200),
             2,
         )
+        if captions is not None and fi < len(captions) and captions[fi]:
+            frame = np.vstack([frame, np.full((34, frame.shape[1], 3), 255, np.uint8)])
+            cv2.putText(
+                frame,
+                captions[fi],
+                (8, frame.shape[0] - 11),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (30, 30, 30),
+                1,
+                cv2.LINE_AA,
+            )
         if vw is None:
             vw = cv2.VideoWriter(
                 str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (frame.shape[1], frame.shape[0])

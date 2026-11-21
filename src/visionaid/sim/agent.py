@@ -138,6 +138,7 @@ class EpisodeResult:
     states: dict
     events_applied: int = 0
     frames: list | None = None
+    cues: list | None = None  # consignes émises (si record), pour le rendu sonore
 
     @property
     def ratio(self) -> float:
@@ -216,6 +217,7 @@ def run_episode(
     if world.known_object:
         anchor.update_world(world.obj + rng.normal(0, 0.05, 3), 0.0, 1.0, 2.0)
     cues: deque = deque()
+    all_cues: list = []
     path = None
     cm_cost = None
     traveled, collisions, replans = 0.0, 0, 0
@@ -265,6 +267,8 @@ def run_episode(
         cue = engine.update(t, k, Pose(t, k, T, "ok"), obj, path, cm)
         states[cue.state] = states.get(cue.state, 0) + 1
         cues.append(cue)
+        if record:
+            all_cues.append(cue)
         delayed = None
         while cues and cues[0].t <= t - agent.reaction + 1e-9:
             delayed = cues.popleft()
@@ -307,4 +311,5 @@ def run_episode(
         states,
         n_events,
         frames,
+        list(all_cues) if record else None,
     )

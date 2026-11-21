@@ -1,4 +1,15 @@
-"""Rendu sonore des consignes : balise spatialisée, alertes, jingle d'arrivée ; WAV ou temps réel."""
+"""Rendu hors ligne des consignes en piste stéréo (WAV), avec les sons de `assets/sounds`.
+
+Exécute les `SoundCommand` de `audio.director` exactement comme le téléphone :
+- guide : `guide_notes` note(s) de direction_2, fondu d'entrée et extinction exponentielle,
+  répétée tous les `interval_s`, spatialisée (ITD/ILD paramétriques, `audio.binaural`) ;
+- alerte : son grave non spatialisé, répété tous les `alert_period_s` ;
+- arrivée : joué une fois, non spatialisé ;
+- halo : réverbération légère, identique sur les deux oreilles (ne déplace pas la direction).
+
+Le téléphone utilise le rendu HRTF du navigateur ; ici la spatialisation est paramétrique
+(sans fichier HRTF), donc proche mais pas identique.
+"""
 
 from __future__ import annotations
 
@@ -6,81 +17,68 @@ import math
 from pathlib import Path
 
 import numpy as np
-from numba import njit
 
 from visionaid.audio.binaural import smooth_azimuth, spatialize
-from visionaid.bus.messages import GuidanceCue
+from visionaid.audio.director import ALERT, GUIDE, SEARCH, SoundDirector
+from visionaid.bus.messages import GuidanceCue, SoundCommand
+from visionaid.utils.config import resolve_path
 from visionaid.utils.logging import get_logger
 
 log = get_logger("audio")
-
-MODE_SILENT, MODE_BEACON, MODE_ALERT, MODE_STOP = 0, 1, 2, 3
-STATE_MODE = {
-    "SEARCHING": MODE_BEACON,
-    "NAVIGATING": MODE_BEACON,
-    "APPROACHING": MODE_BEACON,
-    "ARRIVED": MODE_SILENT,
-    "OBSTACLE_ALERT": MODE_ALERT,
-    "TRACKING_LOST": MODE_STOP,
-}
+HALO_HIGHPASS_HZ = 700.0
 
 
-@njit(cache=True)
-def _source_kernel(mode, freq, rate, gain, fs, beep_s, alert_freq):
-    """Synthèse mono à phase continue. Bips à enveloppe en cosinus surélevé (pas de clic)."""
-    n = mode.shape[0]
-    out = np.zeros(n)
-    ph = 0.0  # phase porteuse
-    bph = 0.0  # phase du train de bips (0..1)
-    aph = 0.0  # phase de modulation de l'alerte
-    stop_ph = 0.0
-    for i in range(n):
-        m = mode[i]
-        if m == 1:
-            bph += rate[i] / fs
-            if bph >= 1.0:
-                bph -= 1.0
-            tb = bph / rate[i] if rate[i] > 0 else 1e9
-            env = 0.0
-            if tb < beep_s:
-                env = 0.5 - 0.5 * math.cos(2 * math.pi * tb / beep_s)
-            ph += 2 * math.pi * freq[i] / fs
-            out[i] = gain[i] * env * (math.sin(ph) + 0.3 * math.sin(2 * ph))
-        elif m == 2:
-            # alerte : deux tons alternés à 8 Hz, timbre riche (harmoniques impaires)
-            aph += 8.0 / fs
-            if aph >= 1.0:
-                aph -= 1.0
-            f = alert_freq if aph < 0.5 else alert_freq * 1.5
-            ph += 2 * math.pi * f / fs
-            env = 0.5 - 0.5 * math.cos(2 * math.pi * aph * 2.0)
-            out[i] = (
-                gain[i]
-                * (0.4 + 0.6 * env)
-                * (math.sin(ph) + 0.33 * math.sin(3 * ph) + 0.2 * math.sin(5 * ph))
-            )
-        elif m == 3:
-            # repérage perdu : silence, un bip grave de 0,25 s toutes les 1,5 s
-            stop_ph += 1.0 / fs
-            if stop_ph >= 1.5:
-                stop_ph -= 1.5
-            env = 0.0
-            if stop_ph < 0.25:
-                env = 0.5 - 0.5 * math.cos(2 * math.pi * stop_ph / 0.25)
-            ph += 2 * math.pi * 220.0 / fs
-            out[i] = gain[i] * env * math.sin(ph)
-        else:
-            out[i] = 0.0
-    return out
+def db_lin(db: float) -> float:
+    return 10.0 ** (float(db) / 20.0)
 
 
-def jingle(fs: int, gain: float) -> np.ndarray:
-    """Arpège ascendant do-mi-sol-do (0,6 s)."""
-    notes = [523.25, 659.25, 783.99, 1046.5]
-    d = 0.15
-    t = np.arange(int(d * fs)) / fs
-    env = np.sin(np.pi * t / d) ** 2
-    return np.concatenate([gain * env * np.sin(2 * np.pi * f * t) for f in notes])
+def load_sound(path: str | Path, fs: int) -> np.ndarray:
+    """WAV → float64 (N, C) au taux `fs`."""
+    import soundfile as sf
+
+    x, sr = sf.read(str(path), always_2d=True)
+    if sr != fs:
+        from math import gcd
+
+        from scipy.signal import resample_poly
+
+        g = gcd(int(sr), int(fs))
+        x = resample_poly(x, fs // g, sr // g, axis=0)
+    return np.asarray(x, np.float64)
+
+
+def guide_note(x: np.ndarray, fs: int, notes: int, note_s: float, fade_in: float, fade_out: float):
+    """Mono : les `notes` premières notes, fondu d'entrée linéaire, extinction exponentielle."""
+    m = x.mean(axis=1)
+    n = len(m) if notes >= 5 else min(len(m), int(round(notes * note_s * fs)))
+    y = m[:n].copy()
+    ni = min(int(fade_in * fs), n // 3)
+    if ni > 0:
+        y[:ni] *= np.arange(ni) / ni
+    no = min(int(fade_out * fs), n // 2)
+    if no > 0:  # comme setTargetAtTime(0, …, fade_out / 5) du téléphone
+        y[n - no :] *= np.exp(-np.arange(no) / (fade_out / 5 * fs))
+    return y
+
+
+def halo_ir(fs: int, seconds: float = 0.9, seed: int = 0) -> np.ndarray:
+    """Réponse impulsionnelle synthétique (même forme que sur le téléphone), énergie 1.
+
+    Mono, appliquée à l'identique aux deux oreilles, et sans graves (passe-haut 700 Hz) : sur une
+    note grave, un halo qui garde la fondamentale interfère avec le son direct et peut faire
+    pencher le volume du mauvais côté (jusqu'à 3,5 dB). La fondamentale, qui porte la direction
+    (décalage entre les oreilles), reste ainsi intacte.
+    """
+    from scipy.signal import butter, lfilter
+
+    rng = np.random.default_rng(seed)
+    n = int(round(seconds * fs))
+    t = np.arange(n) / fs
+    ir = lfilter([0.25], [1, -0.75], rng.uniform(-1, 1, n))  # aigus amortis
+    ir *= np.exp(-t / 0.25) * np.minimum(1.0, t / 0.01)
+    b, a = butter(2, HALO_HIGHPASS_HZ / (fs / 2), "high")
+    ir = lfilter(b, a, ir)
+    return ir / np.sqrt((ir**2).sum())
 
 
 class AudioRenderer:
@@ -88,83 +86,101 @@ class AudioRenderer:
 
     def __init__(self, cfg_audio) -> None:
         a = cfg_audio
+        self.cfg = a
         self.fs = int(a.sample_rate)
         self.head_radius = float(a.head_radius_m)
         self.c = float(a.speed_of_sound)
-        self.f0 = float(a.beacon_freq_hz)
-        self.beep_s = float(a.beep_ms) / 1000.0
-        self.rate_far = float(a.beep_rate_far_hz)
-        self.rate_near = float(a.beep_rate_near_hz)
-        self.far_m = float(a.beep_far_m)
-        self.pitch_per_rad = float(a.pitch_per_rad)
-        self.alert_f = float(a.alert_freq_hz)
-        self.gain = float(a.gain)
         self.tau = float(a.smoothing_s)
+        self.back_hz = float(a.back_lowpass_hz)
+        self.alert_period = float(a.alert_period_s)
+        self.halo = float(a.halo_mix)
+        self.master = db_lin(a.master_gain_db)
+        snd = a.sounds
+        d = resolve_path(a.sounds_dir)
+        self.sounds = {
+            k: load_sound(d / getattr(snd, k).file, self.fs) * db_lin(getattr(snd, k).gain_db)
+            for k in ("guide", "arrived", "alert")
+        }
+        self.guide = guide_note(
+            self.sounds["guide"],
+            self.fs,
+            int(a.guide_notes),
+            float(a.guide_note_s),
+            float(a.guide_fade_in_s),
+            float(a.guide_fade_out_s),
+        )
 
-    def beep_rate(self, distance: float) -> float:
-        """Cadence des bips : plus rapide en s'approchant."""
-        if not math.isfinite(distance):
-            return self.rate_far
-        x = float(np.clip(distance / self.far_m, 0.0, 1.0))
-        return self.rate_near + (self.rate_far - self.rate_near) * x
+    def director(self) -> SoundDirector:
+        return SoundDirector(self.cfg)
 
-    def controls(self, cues: list[GuidanceCue], t0: float, duration: float):
-        """Signaux de contrôle par échantillon (bloqueur d'ordre 0 entre deux consignes)."""
-        n = int(round(duration * self.fs))
-        mode = np.zeros(n, np.int64)
-        freq = np.full(n, self.f0)
-        rate = np.full(n, self.rate_far)
-        gain = np.zeros(n)
-        az = np.zeros(n)
-        jingles = []
-        prev_state = None
-        cues = sorted(cues, key=lambda c: c.t)
-        for k, c in enumerate(cues):
-            a = int(round((c.t - t0) * self.fs))
-            b = int(round((cues[k + 1].t - t0) * self.fs)) if k + 1 < len(cues) else n
-            a, b = max(a, 0), min(b, n)
-            if c.state == "ARRIVED" and prev_state != "ARRIVED":
-                jingles.append(a)
-            prev_state = c.state
-            if b <= a:
-                continue
-            m = STATE_MODE.get(c.state, MODE_SILENT)
-            mode[a:b] = m
-            az[a:b] = c.azimuth
-            if m == MODE_BEACON:
-                rate[a:b] = 0.7 if c.state == "SEARCHING" else self.beep_rate(c.distance)
-                f = (
-                    self.f0 * (1.0 + self.pitch_per_rad * c.elevation)
-                    if c.state == "APPROACHING"
-                    else self.f0
-                )
-                freq[a:b] = max(f, 100.0)
-                gain[a:b] = self.gain * (0.5 if c.state == "SEARCHING" else 1.0)
-            elif m == MODE_ALERT:
-                gain[a:b] = self.gain * (0.6 + 0.4 * c.alert_level)
-            elif m == MODE_STOP:
-                gain[a:b] = self.gain * 0.8
-                az[a:b] = 0.0
-        return mode, freq, rate, gain, az, jingles
+    def interval(self, distance: float) -> float:
+        """Espacement entre deux notes du guide à cette distance (s)."""
+        return SoundDirector(self.cfg).interval(distance)
+
+    @staticmethod
+    def _add(buf: np.ndarray, i: int, x: np.ndarray) -> None:
+        if i >= len(buf) or i + len(x) <= 0:
+            return
+        a, b = max(i, 0), min(i + len(x), len(buf))
+        buf[a:b] += x[a - i : b - i]
+
+    def commands(self, cues: list[GuidanceCue]) -> list[SoundCommand]:
+        d = self.director()
+        return [d.command(c) for c in sorted(cues, key=lambda c: c.t)]
 
     def render(self, cues: list[GuidanceCue], t0: float, duration: float) -> np.ndarray:
-        """Piste stéréo float32 (N,2) de durée `duration` commençant à `t0`."""
-        mode, freq, rate, gain, az, jingles = self.controls(cues, t0, duration)
-        # lissage des gains (évite les clics aux changements d'état)
-        if self.tau > 0 and len(gain):
-            from scipy.signal import lfilter
+        """Piste stéréo float32 (N, 2) de durée `duration` commençant à `t0`."""
+        fs = self.fs
+        n = int(round(duration * fs))
+        spatial = np.zeros(n)
+        diotic = np.zeros((n, 2))
+        az = np.zeros(n)
+        bgain = np.ones(n)
+        cmds = self.commands(cues)
+        next_note: float | None = None
+        next_alert: float | None = None
+        for k, c in enumerate(cmds):
+            ta = c.t
+            tb = cmds[k + 1].t if k + 1 < len(cmds) else t0 + duration
+            ia = max(int(round((ta - t0) * fs)), 0)
+            ib = min(int(round((tb - t0) * fs)), n)
+            if ib > ia:
+                az[ia:ib] = c.azimuth_render
+                bgain[ia:ib] = db_lin(c.back_gain_db)
+            if c.mode in (GUIDE, SEARCH):
+                if next_note is None:
+                    next_note = ta
+                while next_note < tb:
+                    i = int(round((next_note - t0) * fs))
+                    self._add(spatial, i, self.guide * db_lin(c.gain_db))
+                    next_note += c.interval_s
+            else:
+                next_note = None
+            if c.mode == ALERT:
+                if next_alert is None:
+                    next_alert = ta
+                while next_alert < tb:
+                    self._add(diotic, int(round((next_alert - t0) * fs)), self.sounds["alert"])
+                    next_alert += self.alert_period
+            else:
+                next_alert = None
+            if c.event == "arrived":
+                self._add(diotic, int(round((ta - t0) * fs)), self.sounds["arrived"])
+        if n == 0:
+            return np.zeros((0, 2), np.float32)
+        # gains et direction lissés : aucun clic aux changements
+        from scipy.signal import fftconvolve, lfilter
 
-            k = math.exp(-1.0 / (0.01 * self.fs))
-            gain = lfilter([1 - k], [1, -k], gain)
-        mono = _source_kernel(mode, freq, rate, gain, float(self.fs), self.beep_s, self.alert_f)
-        azs = smooth_azimuth(az, self.fs, self.tau)
-        st = spatialize(mono, azs, self.fs, self.head_radius, self.c)
-        jg = jingle(self.fs, self.gain)
-        for a in jingles:
-            b = min(a + len(jg), len(st))
-            st[a:b] += jg[: b - a, None] * 0.7
-        peak = float(np.abs(st).max()) if len(st) else 0.0
+        kk = math.exp(-1.0 / (max(self.tau, 1e-3) * fs))
+        bgain = lfilter([1 - kk], [1, -kk], bgain, zi=[bgain[0] * kk])[0]
+        azs = smooth_azimuth(az, fs, self.tau)
+        st = spatialize(spatial * bgain, azs, fs, self.head_radius, self.c, self.back_hz)
+        if self.halo > 0 and spatial.any():
+            st += self.halo * fftconvolve(spatial, halo_ir(fs))[:n, None]
+        st = (st + diotic) * self.master
+        peak = float(np.abs(st).max())
         if peak > 0.98:
+            log.warning("Piste trop forte (crête %.2f) : ramenée à 0,98", peak)
             st *= 0.98 / peak
         return st.astype(np.float32)
 
@@ -173,26 +189,3 @@ class AudioRenderer:
 
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         sf.write(str(path), stereo, self.fs, subtype="PCM_16")
-
-
-class RealtimePlayer:
-    """Lecture temps réel optionnelle via `sounddevice` (désactivée par défaut et dans les tests)."""
-
-    def __init__(self, renderer: AudioRenderer, enabled: bool = False) -> None:
-        self.r = renderer
-        self.enabled = enabled
-        self.sd = None
-        if enabled:
-            try:
-                import sounddevice as sd  # type: ignore
-
-                self.sd = sd
-            except ImportError:
-                log.warning("sounddevice absent : lecture temps réel désactivée")
-                self.enabled = False
-
-    def play_block(self, cue: GuidanceCue, block_s: float = 0.05) -> None:
-        if not self.enabled or self.sd is None:
-            return
-        st = self.r.render([cue], cue.t, block_s)
-        self.sd.play(st, self.r.fs, blocking=False)

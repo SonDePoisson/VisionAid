@@ -29,11 +29,31 @@ En-tête : `{"type": "frame", "seq": int, "t_phone": float, "w": int, "h": int, 
 
 | `type` | Champs | Rôle |
 |---|---|---|
-| `welcome` | `protocol`, `session` (nom ou `null`), `max_fps`, `jpeg_quality`, `imu_batch_ms`, `capture_width`, `capture_height`, `ack_timeout_s`, `ping_interval_s` | Réponse à `hello`, avec les réglages imposés par le PC. |
+| `welcome` | `protocol`, `session` (nom ou `null`), `max_fps`, `jpeg_quality`, `imu_batch_ms`, `capture_width`, `capture_height`, `ack_timeout_s`, `ping_interval_s`, `audio` | Réponse à `hello`, avec les réglages imposés par le PC. `audio` : réglages du rendu sonore (voir plus bas), ou `null` si les sons sont absents. |
 | `ack` | `seq` | Image reçue et décodée. |
 | `pong` | `id`, `t_phone`, `t_pc` | Réponse au ping. |
 | `stats` | `fps_in`, `imu_hz`, `offset_ms`, `rtt_ms`, `frame_age_ms` | Toutes les secondes, pour l'affichage sur le téléphone. |
 | `error` | `message` | Erreur fatale (version, format), suivie de la fermeture. |
+| `sound` | `t`, `state`, `mode`, `az`, `az_raw`, `dist`, `interval`, `gain_db`, `lowpass_hz`, `back_gain_db`, `event` | Consigne sonore, ~20 par seconde (`realtime.cue_hz`). Voir « Son ». |
+
+## Son (PC → téléphone → casque)
+
+Le PC décide quoi jouer (`audio/director.py`), le téléphone l'exécute avec Web Audio (`web/audio.js`), spatialisation HRTF du navigateur. Les sons sont servis par le PC sur `/sounds/<fichier>` (dossier `audio.sounds_dir`).
+
+`welcome.audio` : `sounds` (`guide`, `arrived`, `alert` → URL), `gains_db` (par son), `guide_notes`, `guide_note_s`, `fade_in_s`, `fade_out_s`, `halo_mix`, `master_gain_db`, `panning` (`HRTF` ou `equalpower`), `smoothing_s`, `alert_period_s`, `watchdog_s`.
+
+Message `sound` :
+
+| Champ | Sens |
+|---|---|
+| `mode` | `search` (note douce qui balaie), `guide` (note spatialisée répétée), `alert` (son grave non spatialisé, répété toutes les `alert_period_s`), `arrived` (silence après le son d'arrivée), `silent` |
+| `az` | direction à rendre (rad, positif à gauche), après exagération des petits angles ; `az_raw` : direction réelle |
+| `interval` | espacement entre deux notes du guide (s), réduit en approchant |
+| `gain_db` | gain de la note (recherche : plus douce) |
+| `lowpass_hz`, `back_gain_db` | assourdissement quand l'objectif est derrière |
+| `event` | `arrived` : jouer le son d'arrivée une fois |
+
+Sans message `sound` depuis `watchdog_s` (1,5 s) pendant le guidage, le téléphone joue l'alerte « arrête-toi » : un guide figé serait dangereux.
 
 ## Publication sur le bus (côté PC)
 - `frame` → `Frame(t=t_phone, frame_idx=seq, image=BGR redimensionnée à video.width, K, t_phone, t_recv)`.

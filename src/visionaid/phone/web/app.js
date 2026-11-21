@@ -9,7 +9,10 @@ const ui = {
   calibMode: $("calibMode"), video: $("video"), fps: $("fps"), imu: $("imu"), rtt: $("rtt"),
   age: $("age"), bubble: $("bubble"), levelText: $("levelText"), log: $("log"),
   notes: $("notes"), sendNotes: $("sendNotes"),
+  sound: $("sound"), volume: $("volume"), volumeOut: $("volumeOut"), testSound: $("testSound"),
 };
+const audio = window.guideAudio;
+audio.onStatus = (text, cls) => { ui.sound.textContent = text; ui.sound.className = cls || ""; };
 
 // Réglages par défaut, remplacés par le message « welcome » du PC.
 const cfg = {
@@ -48,6 +51,8 @@ async function start() {
     return;
   }
   ui.start.disabled = true;
+  // iOS : le son ne se déverrouille que dans le geste de l'utilisateur, avant toute attente
+  audio.unlock();
   // iOS : la permission des capteurs doit être demandée dans le geste de l'utilisateur, en premier.
   try {
     if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
@@ -88,6 +93,7 @@ async function start() {
   document.addEventListener("visibilitychange", onVisibility);
 
   state.running = true;
+  audio.start();
   ui.stop.disabled = false;
   ui.capture.disabled = false;
   ui.sendNotes.disabled = false;
@@ -102,6 +108,7 @@ async function start() {
 
 function stop() {
   state.running = false;
+  audio.stop();
   send({ type: "bye" });
   state.timers.forEach(clearInterval);
   state.timers = [];
@@ -154,6 +161,9 @@ function connect() {
     if (m.type === "welcome") {
       for (const k of Object.keys(cfg)) if (m[k] !== undefined && m[k] !== null) cfg[k] = m[k];
       setStatus(m.session ? `Connecté — enregistrement « ${m.session} »` : "Connecté", "ok");
+      audio.configure(m.audio).then(() => { ui.testSound.disabled = !audio.ready; });
+    } else if (m.type === "sound") {
+      audio.onSound(m);
     } else if (m.type === "ack") {
       state.waitingAck = false;
     } else if (m.type === "pong") {
@@ -294,6 +304,17 @@ ui.stop.addEventListener("click", stop);
 ui.capture.addEventListener("click", () => {
   if (!ui.calibMode.checked) { log("Activez d'abord le mode calibration."); return; }
   if (!state.busy) sendFrame(nowS(), true);
+});
+function showVolume() {
+  const v = +ui.volume.value;
+  ui.volumeOut.textContent = `${v > 0 ? "+" : ""}${v} dB`;
+}
+ui.volume.value = String(audio.userDb);
+showVolume();
+ui.volume.addEventListener("input", () => { audio.setVolume(+ui.volume.value); showVolume(); });
+ui.testSound.addEventListener("click", () => {
+  audio.unlock();
+  if (audio.test()) log("Test du son : gauche, droite, puis devant.");
 });
 ui.sendNotes.addEventListener("click", () => {
   send({ type: "notes", text: ui.notes.value });

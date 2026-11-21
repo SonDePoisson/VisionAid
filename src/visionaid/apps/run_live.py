@@ -2,6 +2,7 @@
 
     phone ─► perception ─────────────────────────────┐
           ─► géométrie (profondeur + VIO, IMU) ─► monde ─► planificateur ─► puits (mesures)
+                                                    ├─► guidage ─► son ─► téléphone (casque)
                                                     └────────────────────► Rerun
 
 Sources possibles :
@@ -40,7 +41,13 @@ def graph(raw: dict, source: str = "phone", rerun: str = "off") -> list[NodeSpec
     if source == "session":
         src = NodeSpec("source", f"{R}:SessionReplayBlock", outputs=["frame", "imu"])
     else:
-        src = NodeSpec("source", f"{L}:make_phone_source", outputs=["frame", "imu", "clock"])
+        # la source téléphone lit aussi la consigne sonore et l'envoie au casque (WebSocket)
+        src = NodeSpec(
+            "source",
+            f"{L}:make_phone_source",
+            inputs=["sound"],
+            outputs=["frame", "imu", "clock"],
+        )
     specs = [
         src,
         NodeSpec(
@@ -78,6 +85,15 @@ def graph(raw: dict, source: str = "phone", rerun: str = "off") -> list[NodeSpec
             heavy_inputs=["costmap"],
         ),
         NodeSpec(
+            "guidance",
+            f"{L}:LiveGuidanceBlock",
+            inputs=["pose_world", "object", "path", "costmap"],
+            outputs=["cue", "sound"],
+            trigger=None,  # minuteur : consigne sonore à cadence fixe sur les dernières entrées
+            rate_hz=float(raw["realtime"]["cue_hz"]),
+            heavy_inputs=["costmap"],
+        ),
+        NodeSpec(
             "path_sink",
             f"{L}:PathSink",
             inputs=["path", "object"] + (["clock"] if source == "phone" else []),
@@ -89,7 +105,16 @@ def graph(raw: dict, source: str = "phone", rerun: str = "off") -> list[NodeSpec
             NodeSpec(
                 "viz",
                 f"{L}:RerunLiveBlock",
-                inputs=["frame", "detections", "pose_world", "costmap", "object", "path", "depth"],
+                inputs=[
+                    "frame",
+                    "detections",
+                    "pose_world",
+                    "costmap",
+                    "object",
+                    "path",
+                    "depth",
+                    "sound",
+                ],
                 trigger="frame",
                 rate_hz=10.0,
                 heavy_inputs=["frame", "costmap", "depth"],
@@ -259,6 +284,7 @@ def run(
         "geometry": blocks.get("geometry", {}),
         "source_stats": blocks.get("source", {}),
         "planner": blocks.get("planner", {}),
+        "guidance": blocks.get("guidance", {}),
         "effective_hz": rates,
         "stage_latency": {
             name: {

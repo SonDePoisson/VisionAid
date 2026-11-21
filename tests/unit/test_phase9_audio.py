@@ -93,9 +93,9 @@ def test_no_click_on_azimuth_jump():
     assert d_jump <= 1.5 * d_steady
 
 
-def test_beep_rate_faster_when_closer():
+def test_guide_interval_shorter_when_closer():
     r = AudioRenderer(load_config().audio)
-    assert r.beep_rate(0.5) > r.beep_rate(2.0) > r.beep_rate(10.0)
+    assert r.interval(0.5) < r.interval(2.0) < r.interval(10.0)
 
 
 def test_wav_duration(tmp_path):
