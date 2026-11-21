@@ -81,7 +81,7 @@ depth:
   input_width: 518
   temporal_smoothing: false
   smoothing_alpha: 0.5
-  scale_factor: 1.0       # facteur d'échelle global (ajusté par la gourde si besoin)
+  scale_factor: 0.76      # facteur d'échelle global estimé sur la gourde (voir DECISIONS.md)
   min_m: 0.1
   max_m: 20.0
 
@@ -114,15 +114,16 @@ floor:
 costmap:
   resolution_m: 0.05
   init_size_m: 12.0
-  obstacle_band_m: [0.05, 1.90]
-  floor_band_m: 0.05
+  obstacle_band_m: [0.10, 1.90]
+  floor_band_m: 0.08
+  obstacle_height_slope: 0.04  # m de tolérance supplémentaire par m de distance
   l_occ: 0.85
   l_free: -0.4
   l_min: -4.0
   l_max: 4.0
   occ_threshold: 0.6       # proba > seuil => occupé
   free_threshold: 0.35     # proba < seuil => libre
-  decay: 0.97              # oubli multiplicatif des log-odds par mise à jour
+  decay_half_life_s: 20.0  # oubli : demi-vie des log-odds (s)
   robot_radius_m: 0.35
   cost_decay_m: 0.5        # portée du coût décroissant autour des obstacles
   cost_scale: 2.0

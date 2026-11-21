@@ -8,3 +8,4 @@
 | 3 — Détection & ReID | ✅ | 11 unit + 8 slow/data | ~1 h | YOLOE-26s-seg + DINOv2-small ; seuil 0,575 ; rappel aug. 98 %, FPR 0 % ; cible confirmée 60 % des frames ; bug de saut de piste corrigé |
 | 4 — Profondeur métrique | ✅ | 6 unit + 3 slow/data | ~20 min | DAv2-Metric-Indoor-Small (DA3 indisponible) ; 7,4 img/s ; hauteur gourde 0,33 m vs 0,25 m |
 | 5 — Pose (odométrie RGB-D) | ✅ | 7 unit + 3 slow/data | ~45 min | 0 % perdu, 35 keyframes, aller-retour 0,6 % ; critère « par paire » sur keyframes (voir DECISIONS) ; hauteur caméra testée en phase 6 |
+| 6 — Fusion 3D | ✅ | 11 unit + 3 slow/data | ~50 min | facteur d'échelle 0,76 ; caméra 1,39 m (σ 8 cm) ; gourde σ 7,5 cm à 0,87 m du sol ; costmap 27 % libre / 73 % occupé (pièce meublée) |

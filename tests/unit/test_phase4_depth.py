@@ -23,7 +23,7 @@ def test_stub_shape_dtype_positive(tmp_path):
 
 
 def test_cache_path_and_hit(tmp_path):
-    cfg = load_config(overrides={"paths.cache": str(tmp_path)})
+    cfg = load_config(overrides={"paths.cache": str(tmp_path), "depth.scale_factor": 1.0})
     calls = []
 
     def fn(h, w):
@@ -55,7 +55,7 @@ def test_warp_identity():
 
 
 def test_temporal_smoothing(tmp_path):
-    cfg = load_config(overrides={"depth.temporal_smoothing": True, "depth.smoothing_alpha": 0.5})
+    cfg = load_config(overrides={"depth.temporal_smoothing": True, "depth.smoothing_alpha": 0.5, "depth.scale_factor": 1.0})
     vals = iter([2.0, 2.2])
     est = DepthEstimator(cfg, backend=StubDepthBackend(lambda h, w: np.full((h, w), next(vals))))
     est(_frame(0))
