@@ -134,6 +134,9 @@ costmap:
   cost_decay_m: 0.5        # portée du coût décroissant autour des obstacles
   cost_scale: 2.0
   max_range_m: 5.0
+  occ_range_m: 3.0         # obstacles marqués seulement jusqu'à 3 m (profondeur fiable)
+  carve_radius_m: 0.20     # rayon libéré sous l'utilisateur (là où il marche, c'est libre)
+  walked_free_bias: 0.4    # biais « libre » par mise à jour sur les cellules parcourues (< l_occ)
   pixel_step: 6
   raycast: true
 

@@ -31,6 +31,12 @@ class OccupancyGrid:
         self.max_range = float(c.max_range_m)
         self.slope = float(getattr(c, "obstacle_height_slope", 0.0))
         self.raycast = bool(c.raycast)
+        # obstacles marqués seulement à portée fiable (au-delà, la profondeur monoculaire fait
+        # « remonter » le sol lointain et ferme des passages qui n'existent pas)
+        self.occ_range = float(getattr(c, "occ_range_m", None) or self.max_range)
+        self.walked = np.zeros(self.L.shape, bool)  # cellules où l'utilisateur est passé
+        self.walk_clearance = float(getattr(c, "carve_radius_m", 0.2) or 0.2)
+        self.walked_bias = float(getattr(c, "walked_free_bias", 0.0) or 0.0)
         self.n_updates = 0
 
     # ------------------------------------------------------------ indexation
@@ -76,6 +82,9 @@ class OccupancyGrid:
         L = np.zeros((nh, nw), np.float32)
         L[di : di + h, dj : dj + w] = self.L
         self.L = L
+        W = np.zeros((nh, nw), bool)
+        W[di : di + h, dj : dj + w] = self.walked
+        self.walked = W
         self.origin = np.array([x0 - dj * self.res, y0 - di * self.res])
 
     # ---------------------------------------------------------- mise à jour
@@ -95,7 +104,7 @@ class OccupancyGrid:
         r = horiz[horiz < self.max_range]
         # tolérance croissante avec la distance (bruit de profondeur, inclinaison du sol estimée)
         lo = self.band[0] + self.slope * r
-        obst = pts[(z >= lo) & (z <= self.band[1])]
+        obst = pts[(z >= lo) & (z <= self.band[1]) & (r < self.occ_range)]
         floor = pts[np.abs(z) < self.floor_band + self.slope * r]
         self.ensure(np.concatenate([pts[:, :2], cam_pos[None, :2]]))
         h, w = self.L.shape
@@ -118,7 +127,27 @@ class OccupancyGrid:
             self.L[free_cells[:, 0], free_cells[:, 1]] += self.l_free
         if len(occ_cells):
             self.L[occ_cells[:, 0], occ_cells[:, 1]] += self.l_occ
+        if self.walked_bias > 0 and self.walked.any():
+            # cellules parcourues : léger biais « libre » à chaque mise à jour. Le bruit ponctuel
+            # est absorbé ; un vrai obstacle (vu à chaque mise à jour, +l_occ) l'emporte vite
+            self.L[self.walked] -= self.walked_bias
         np.clip(self.L, self.l_min, self.l_max, out=self.L)
+
+    def carve(self, xy: np.ndarray, radius: float) -> None:
+        """Marque libres, au moment du passage, les cellules à moins de `radius` de l'utilisateur.
+
+        La libération n'est pas définitive : un obstacle apparu plus tard au même endroit
+        (chaise déplacée, personne) est de nouveau marqué par les mesures suivantes.
+        """
+        xy = np.asarray(xy, float)[:2]
+        self.ensure(xy[None, :])
+        r = int(np.ceil(radius / self.res))
+        ci, cj = self.world_to_cell(xy[None, :])[0]
+        h, w = self.L.shape
+        ii, jj = np.mgrid[max(ci - r, 0) : min(ci + r + 1, h), max(cj - r, 0) : min(cj + r + 1, w)]
+        m = (ii - ci) ** 2 + (jj - cj) ** 2 <= (radius / self.res) ** 2
+        self.walked[ii[m], jj[m]] = True
+        self.L[ii[m], jj[m]] = np.minimum(self.L[ii[m], jj[m]], self.l_min)
 
     def _cells(self, xy: np.ndarray) -> np.ndarray:
         if len(xy) == 0:
@@ -166,7 +195,15 @@ class OccupancyGrid:
             -np.maximum(dist - self.radius, 0.0) / max(self.cost_decay, 1e-6)
         )
         c = c.astype(np.float32)
-        c[dist < self.radius] = np.inf
+        # gonflage infranchissable, sauf sur les cellules déjà parcourues qui ne sont pas des
+        # obstacles et restent à plus de `walk_clearance` d'un obstacle (coût élevé mais fini) :
+        # l'utilisateur n'est jamais « bloqué » là où il vient de marcher
+        blocked = dist < self.radius
+        if self.walked.shape == blocked.shape:
+            ok = self.walked & ~occ & (dist >= self.walk_clearance)
+            c[blocked & ok] = 2.0 * self.cost_scale
+            blocked &= ~ok
+        c[blocked] = np.inf
         return c
 
     def to_msg(self, t: float, frame_idx: int) -> Costmap:

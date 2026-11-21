@@ -85,6 +85,9 @@ class WorldModel:
             )
             dt = 1.0 / 30.0 if self._t_prev is None else max(t - self._t_prev, 0.0)
             self.grid.update(transform(T, pc), T[:3, 3], dt)
+            carve = float(getattr(self.cfg.costmap, "carve_radius_m", 0.0) or 0.0)
+            if carve > 0:
+                self.grid.carve(T[:2, 3], carve)
             self._t_prev = t
             if target is not None:
                 m, b, c = target
