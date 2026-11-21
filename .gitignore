@@ -12,7 +12,6 @@ wheels/
 
 # Données, sorties, caches, poids
 data/
-outputs/
 .cache/
 *.pt
 *.pth

@@ -1,0 +1,37 @@
+=== VisionAId night run Sat Nov 21 03:55:22 CET 2026 ===
+--- pytest -m 'not slow' ---
+........................................................................ [ 67%]
+...................................                                      [100%]
+107 passed, 23 deselected in 64.64s (0:01:04)
+--- pytest -m slow ---
+.......................                                                  [100%]
+=============================== warnings summary ===============================
+tests/data/test_phase4_depth_data.py::test_median_depth_indoor
+  /Users/sarahhusson/VisionAid/tests/data/test_phase4_depth_data.py:35: RuntimeWarning: All-NaN slice encountered
+    "ms_per_frame": float(np.nanmedian(t) * 1e3),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+23 passed, 107 deselected, 1 warning in 494.16s (0:08:14)
+--- run_offline ---
+04:04:45 INFO    visionaid.depth: Backend profondeur da3metric indisponible : ModuleNotFoundError("No module named 'depth_anything_3'")
+04:04:45 INFO    visionaid.depth: Backend profondeur da3small indisponible : ModuleNotFoundError("No module named 'depth_anything_3'")
+W1121 04:04:48.360000 70690 .venv/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/redirects.py:35] NOTE: Redirects are currently not supported in MacOs.
+Loading weights:   0%|          | 0/287 [00:00<?, ?it/s]Loading weights: 100%|██████████| 287/287 [00:00<00:00, 11914.10it/s]
+04:04:50 INFO    visionaid.depth: Profondeur : depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf sur mps
+04:05:53 INFO    visionaid.offline: Offline terminé : 485 frames, état final ARRIVED, distance 0.22955439184319554
+--- run_realtime (30 s) ---
+04:05:54 INFO    visionaid.runner: Graphe démarré : ['source', 'perception', 'geometry', 'world', 'planner', 'guidance', 'sink']
+04:05:56 INFO    visionaid.depth: Backend profondeur da3metric indisponible : ModuleNotFoundError("No module named 'depth_anything_3'")
+04:05:56 INFO    visionaid.depth: Backend profondeur da3small indisponible : ModuleNotFoundError("No module named 'depth_anything_3'")
+/Users/sarahhusson/VisionAid/.venv/lib/python3.12/site-packages/torch/jit/_serialization.py:176: FutureWarning: `torch.jit.load` is deprecated. Please switch to `torch.export`.
+  warnings.warn(
+W1121 04:05:58.128000 70728 .venv/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/redirects.py:35] NOTE: Redirects are currently not supported in MacOs.
+04:05:58 INFO    visionaid.detector: Détecteur : yoloe26 (yoloe-26s-seg.pt) sur mps, prompts=['water bottle', 'bottle', 'flask']
+Loading weights:   0%|          | 0/287 [00:00<?, ?it/s]Loading weights: 100%|██████████| 287/287 [00:00<00:00, 11749.78it/s]
+04:06:00 INFO    visionaid.depth: Profondeur : depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf sur mps
+W1121 04:06:01.692000 70729 .venv/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/redirects.py:35] NOTE: Redirects are currently not supported in MacOs.
+Loading weights:   0%|          | 0/223 [00:00<?, ?it/s]Loading weights: 100%|██████████| 223/223 [00:00<00:00, 13096.74it/s]
+04:06:50 INFO    visionaid.realtime: Temps réel : {'n_cues': 143, 'e2e_p50_ms': 382.39455223083496, 'e2e_p95_ms': 479.6600580215454, 'cue_hz': 19.904642020176766, 'fresh_cue_hz': 4.840754777015778, 'states': {'SEARCHING': 19, 'NAVIGATING': 17, 'OBSTACLE_ALERT': 55, 'APPROACHING': 33, 'ARRIVED': 18, 'TRACKING_LOST': 1}}
+--- agrégation ---
+{'fast': 0, 'slow': 0, 'offline': 0, 'realtime': 0}
+=== fin Sat Nov 21 04:06:50 CET 2026 : fast=0 slow=0 offline=0 realtime=0 ===

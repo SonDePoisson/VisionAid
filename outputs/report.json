@@ -1,0 +1,432 @@
+{
+  "reid": {
+    "aug_recall": 0.9833333333333333,
+    "n_aug": 60,
+    "threshold": 0.5754,
+    "neg_fpr": 0.0,
+    "n_neg": 607,
+    "n_neg_excluded": 75,
+    "neg_max": 0.530768871307373
+  },
+  "perception": {
+    "detector_backend": "yoloe26",
+    "detector_weights": "yoloe-26s-seg.pt",
+    "reid_backend": "dinov2",
+    "threshold": 0.5754,
+    "n_frames": 485,
+    "perception_fps": 23.515832817944766,
+    "perception_ms_p50": 39.437708001059946,
+    "image_shape": [
+      1138,
+      640
+    ],
+    "device": "mps",
+    "confirmed_fraction": 0.6,
+    "n_target_tracks": 4,
+    "first_confirmed_frame": 104,
+    "color_check_frames": 291,
+    "color_incompatible": 0,
+    "detector_fps": 53.548411551653324
+  },
+  "depth": {
+    "backend": "depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf",
+    "median_depth_m": 2.547187566757202,
+    "ms_per_frame": null,
+    "fps": null,
+    "consecutive_rel_change_median": 0.01516678649932146,
+    "target_height_est_m": 0.2511514030463125,
+    "target_height_true_m": 0.25,
+    "n_height_frames": 96,
+    "scale_factor": 0.76
+  },
+  "vo": {
+    "max_step_m": 0.07560686270101896,
+    "max_step_deg": 4.529022961233058,
+    "lost_fraction": 0.0,
+    "n_keyframes": 32,
+    "path_length_m": 4.844171893382226,
+    "net_displacement_m": 2.517318160045531,
+    "median_inliers": 301.5,
+    "roundtrip_dist_m": 6.690157815706555,
+    "roundtrip_err_m": 0.11786090815118482,
+    "roundtrip_rel": 0.017617059477204187,
+    "roundtrip_rot_deg": 2.636303005797545,
+    "camera_height_median_m": 1.393449164781334,
+    "camera_height_std_m": 0.07964446589616678
+  },
+  "mapping": {
+    "free_frac_known": 0.2658414382552314,
+    "occ_frac_known": 0.7341585617447687,
+    "known_area_m2": 16.965000000000003,
+    "costmap_png": "/Users/sarahhusson/VisionAid/outputs/costmap_final.png",
+    "object_pos_std_m": 0.07513170278611478,
+    "object_pos_mean": [
+      2.27263202793157,
+      -1.466662073985311,
+      0.8733066848924081
+    ],
+    "object_height_m": 0.8733066848924081
+  },
+  "sim": {
+    "appearing": {
+      "n": 100,
+      "errors": 0,
+      "success_rate": 0.96,
+      "collision_free_rate": 0.99,
+      "ratio_median": 0.930675385370449,
+      "time_median_s": 9.84999999999998,
+      "failed_seeds": [
+        25,
+        28,
+        90,
+        91
+      ],
+      "collision_seeds": [
+        25
+      ],
+      "events_applied_rate": 0.66,
+      "success_rate_with_event": 0.9545454545454546
+    },
+    "corridor": {
+      "n": 100,
+      "errors": 0,
+      "success_rate": 0.94,
+      "collision_free_rate": 0.96,
+      "ratio_median": 0.9638223093141616,
+      "time_median_s": 10.999999999999977,
+      "failed_seeds": [
+        12,
+        42,
+        43,
+        56,
+        76,
+        90
+      ],
+      "collision_seeds": [
+        43,
+        45,
+        51,
+        76
+      ],
+      "events_applied_rate": 0.0,
+      "success_rate_with_event": null
+    },
+    "room": {
+      "n": 100,
+      "errors": 0,
+      "success_rate": 0.95,
+      "collision_free_rate": 0.96,
+      "ratio_median": 0.9410719273913917,
+      "time_median_s": 10.19999999999998,
+      "failed_seeds": [
+        4,
+        32,
+        78,
+        88,
+        89
+      ],
+      "collision_seeds": [
+        4,
+        32,
+        70,
+        98
+      ],
+      "events_applied_rate": 0.0,
+      "success_rate_with_event": null
+    },
+    "videos": [
+      "/Users/sarahhusson/VisionAid/outputs/sim/room_1.mp4",
+      "/Users/sarahhusson/VisionAid/outputs/sim/corridor_2.mp4",
+      "/Users/sarahhusson/VisionAid/outputs/sim/appearing_3.mp4"
+    ]
+  },
+  "offline": {
+    "n_frames": 485,
+    "duration_s": 16.166666666666668,
+    "wall_time_s": 69.13285599999654,
+    "confirmed_fraction": 0.6,
+    "lost_fraction": 0.0,
+    "state_seconds": {
+      "SEARCHING": 3.466666666666664,
+      "OBSTACLE_ALERT": 7.333333333333317,
+      "APPROACHING": 2.366666666666668,
+      "ARRIVED": 2.999999999999999
+    },
+    "state_timeline": [
+      [
+        0.0,
+        "SEARCHING"
+      ],
+      [
+        3.47,
+        "OBSTACLE_ALERT"
+      ],
+      [
+        10.8,
+        "APPROACHING"
+      ],
+      [
+        13.17,
+        "ARRIVED"
+      ]
+    ],
+    "final_state": "ARRIVED",
+    "final_distance_m": 0.22955439184319554,
+    "reached_approach": true,
+    "path_valid_fraction": 0.4762886597938144,
+    "n_plans": 62,
+    "voice_messages": [
+      [
+        0.0,
+        "Tournez lentement sur place"
+      ],
+      [
+        3.466666666666667,
+        "Attention, obstacle devant"
+      ],
+      [
+        10.8,
+        "Vous approchez, tendez la main"
+      ],
+      [
+        13.8,
+        "Vous êtes arrivé"
+      ]
+    ],
+    "stage_latency": {
+      "perception": {
+        "n": 485,
+        "p50_ms": 0.00037500285543501377,
+        "p95_ms": 0.0007080059731379151,
+        "mean_ms": 0.0004137339929752436
+      },
+      "depth": {
+        "n": 485,
+        "p50_ms": 4.519166002864949,
+        "p95_ms": 5.060149397468194,
+        "mean_ms": 4.520182742211564
+      },
+      "pose": {
+        "n": 485,
+        "p50_ms": 13.494834012817591,
+        "p95_ms": 14.95816700044088,
+        "mean_ms": 13.634306799557981
+      },
+      "mapping": {
+        "n": 485,
+        "p50_ms": 86.11195799312554,
+        "p95_ms": 139.46548299572896,
+        "mean_ms": 83.8560134655203
+      },
+      "planning": {
+        "n": 485,
+        "p50_ms": 0.0004169996827840805,
+        "p95_ms": 3.9309415995376153,
+        "mean_ms": 1.5851357033339415
+      },
+      "guidance": {
+        "n": 485,
+        "p50_ms": 0.09012500231619924,
+        "p95_ms": 0.10445880179759115,
+        "mean_ms": 0.08651685187492289
+      }
+    },
+    "guidance_coherence": {
+      "n": 71,
+      "median_deg": 7.112217303271369,
+      "p75_deg": 22.58267851747791
+    },
+    "outputs": {
+      "annotated.mp4": "/Users/sarahhusson/VisionAid/outputs/annotated.mp4",
+      "session.rrd": "/Users/sarahhusson/VisionAid/outputs/session.rrd",
+      "guidance.wav": "/Users/sarahhusson/VisionAid/outputs/guidance.wav",
+      "report.json": "/Users/sarahhusson/VisionAid/outputs/report.json"
+    },
+    "perception": {
+      "detector_backend": "yoloe26",
+      "detector_weights": "yoloe-26s-seg.pt",
+      "reid_backend": "dinov2",
+      "threshold": 0.5754,
+      "n_frames": 485,
+      "perception_fps": 23.515832817944766,
+      "perception_ms_p50": 39.437708001059946,
+      "image_shape": [
+        1138,
+        640
+      ],
+      "device": "mps"
+    },
+    "final_distance_check": 0.22955439184319554
+  },
+  "realtime": {
+    "duration_s": 30.0,
+    "nodes_alive_at_end": 7,
+    "n_nodes": 7,
+    "stop_time_s": 0.6451197080023121,
+    "frames_published": 908,
+    "perception_processed": 390,
+    "geometry_processed": 152,
+    "frame_skip_rate_perception": 0.5704845814977973,
+    "frame_skip_rate_geometry": 0.8325991189427313,
+    "effective_hz": {
+      "source": 30.266666666666666,
+      "perception": 13.0,
+      "world": 5.033333333333333,
+      "geometry": 5.066666666666666,
+      "sink": 19.6,
+      "guidance": 36.333333333333336,
+      "planner": 4.2
+    },
+    "stage_latency": {
+      "source": {
+        "process": {
+          "n": 908,
+          "p50_ms": 32.239749998552725,
+          "p95_ms": 39.89883980684681,
+          "mean_ms": 32.35728871890796
+        }
+      },
+      "perception": {
+        "age_in:frame": {
+          "n": 390,
+          "p50_ms": 15.835046768188477,
+          "p95_ms": 32.857108116149895,
+          "mean_ms": 16.79416008484669
+        },
+        "process": {
+          "n": 390,
+          "p50_ms": 75.52374950319063,
+          "p95_ms": 139.44526250561455,
+          "mean_ms": 76.31948344907217
+        },
+        "e2e_from_trigger_send": {
+          "n": 390,
+          "p50_ms": 93.45555305480957,
+          "p95_ms": 155.895185470581,
+          "mean_ms": 93.29773707267566
+        }
+      },
+      "world": {
+        "process": {
+          "n": 151,
+          "p50_ms": 77.94091600226238,
+          "p95_ms": 145.3381880055531,
+          "mean_ms": 77.07987443726304
+        },
+        "e2e_from_trigger_send": {
+          "n": 151,
+          "p50_ms": 88.48404884338379,
+          "p95_ms": 151.90327167510986,
+          "mean_ms": 89.02668479262599
+        }
+      },
+      "geometry": {
+        "age_in:frame": {
+          "n": 152,
+          "p50_ms": 20.972490310668945,
+          "p95_ms": 34.77290868759155,
+          "mean_ms": 19.830664521769474
+        },
+        "process": {
+          "n": 152,
+          "p50_ms": 166.94872949301498,
+          "p95_ms": 180.19293355100672,
+          "mean_ms": 196.60756549331526
+        },
+        "e2e_from_trigger_send": {
+          "n": 152,
+          "p50_ms": 188.86065483093262,
+          "p95_ms": 211.45957708358765,
+          "mean_ms": 217.5821442353098
+        }
+      },
+      "sink": {
+        "process": {
+          "n": 588,
+          "p50_ms": 0.00383349834010005,
+          "p95_ms": 0.03730460302904248,
+          "mean_ms": 0.011709471189434368
+        },
+        "e2e_from_trigger_send": {
+          "n": 588,
+          "p50_ms": 0.20492076873779297,
+          "p95_ms": 0.36240816116333,
+          "mean_ms": 0.2877789289772916
+        }
+      },
+      "guidance": {
+        "process": {
+          "n": 1090,
+          "p50_ms": 0.13037549797445536,
+          "p95_ms": 0.34057705343002453,
+          "mean_ms": 0.118473095676772
+        }
+      },
+      "planner": {
+        "process": {
+          "n": 126,
+          "p50_ms": 0.3084999989368953,
+          "p95_ms": 4.714624996267958,
+          "mean_ms": 4.0622840470094825
+        },
+        "e2e_from_trigger_send": {
+          "n": 126,
+          "p50_ms": 1.139521598815918,
+          "p95_ms": 6.3034892082214355,
+          "mean_ms": 6.0256057315402565
+        }
+      }
+    },
+    "e2e_latency": {
+      "n_cues": 143,
+      "e2e_p50_ms": 382.39455223083496,
+      "e2e_p95_ms": 479.6600580215454,
+      "cue_hz": 19.904642020176766,
+      "fresh_cue_hz": 4.840754777015778,
+      "states": {
+        "SEARCHING": 19,
+        "NAVIGATING": 17,
+        "OBSTACLE_ALERT": 55,
+        "APPROACHING": 33,
+        "ARRIVED": 18,
+        "TRACKING_LOST": 1
+      }
+    },
+    "blocks": {
+      "source": {
+        "skipped_at_source": 0,
+        "loops": 1
+      },
+      "world": {
+        "n": 143,
+        "with_detections": 138
+      },
+      "geometry": {
+        "n": 152,
+        "lost_fraction": 0.006578947368421052
+      },
+      "sink": {
+        "n_cues": 143,
+        "e2e_p50_ms": 382.39455223083496,
+        "e2e_p95_ms": 479.6600580215454,
+        "cue_hz": 19.904642020176766,
+        "fresh_cue_hz": 4.840754777015778,
+        "states": {
+          "SEARCHING": 19,
+          "NAVIGATING": 17,
+          "OBSTACLE_ALERT": 55,
+          "APPROACHING": 33,
+          "ARRIVED": 18,
+          "TRACKING_LOST": 1
+        }
+      }
+    },
+    "e2e_p95_target_ms": 300
+  },
+  "night_run": {
+    "fast": 0,
+    "slow": 0,
+    "offline": 0,
+    "realtime": 0
+  }
+}

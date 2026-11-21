@@ -1,0 +1,25 @@
+{
+  "video": {
+    "path": "/Users/sarahhusson/VisionAid/data/video/appart.mp4",
+    "width": 1920,
+    "height": 1080,
+    "fps": 30.0,
+    "frame_count": 485,
+    "duration_s": 16.166666666666668,
+    "rotation_deg": 90
+  },
+  "refs": [
+    {
+      "path": "/Users/sarahhusson/VisionAid/data/ref/gourde_1.jpg",
+      "readable": true,
+      "width": 4284,
+      "height": 5712
+    },
+    {
+      "path": "/Users/sarahhusson/VisionAid/data/ref/gourde_2.jpg",
+      "readable": true,
+      "width": 4284,
+      "height": 5712
+    }
+  ]
+}
