@@ -72,6 +72,8 @@ reid:
 tracker:
   iou_match: 0.3
   confirm_frames: 3
+  candidate_ratio: 0.85     # cible probable : score moyen ≥ 0,85 × seuil ReID…
+  candidate_frames: 5       # …sur au moins 5 images consécutives (avant confirmation)
   lost_frames: 10
   max_age_frames: 30
   score_ema: 0.5
@@ -136,6 +138,8 @@ costmap:
   raycast: true
 
 anchor:
+  candidate_min_meas: 4    # mesures 3D cohérentes avant de publier une cible probable
+  candidate_max_offset_m: 1.0  # cible confirmée plus loin du candidat : le candidat était faux
   process_noise: 0.002     # m^2 / s
   meas_noise: 0.05         # m^2 (base, divisée par la confiance)
   shrink_box: 0.3

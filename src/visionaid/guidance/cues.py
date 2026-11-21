@@ -107,6 +107,7 @@ class GuidanceEngine:
         self.obstacle_m = float(g.obstacle_m)
         self.corridor = float(g.obstacle_corridor_m)
         self.final_m = float(g.final_direct_m)
+        self.arrived_floor = float(g.arrived_m) + float(g.hysteresis_m) + 0.01
         self.approach_lookahead = float(g.approach_lookahead_m)
         self.voice_interval = float(g.voice_min_interval_s)
         self.t_voice = -math.inf
@@ -143,6 +144,10 @@ class GuidanceEngine:
         if T_head is not None:
             if known:
                 _, _, dist = relative_direction(T_head, obj.position)
+                if (
+                    obj.state == "candidate"
+                ):  # cible probable : jamais « arrivé » avant confirmation
+                    dist = max(dist, self.arrived_floor)
             obst_d, obst_az = frontal_obstacle(
                 cm, T_head, self.obstacle_m + 0.3, self.cone, self.corridor
             )
