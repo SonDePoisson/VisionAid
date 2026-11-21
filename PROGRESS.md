@@ -22,3 +22,4 @@
 | Phase | Statut | Tests | Durée | Notes |
 |---|---|---|---|---|
 | 14 — Socle phase 2 | ✅ | 6 unit | ~20 min | messages `ImuSample`, `ImuBatch`, `ClockSync`, `Frame.t_phone/t_recv` ; config `phone`, `body`, `session` ; `docs/protocol.md` |
+| 15 — Serveur, page web, faux téléphone | ✅ (page à valider sur iPhone) | 8 unit + 5 integration | ~1 h 15 | HTTPS avec autorité locale, WebSocket JPEG + IMU, acquittement après ingestion, horloge par ping/pong apparié, sessions enregistrées ; page web vérifiée en syntaxe et servie, pas encore testée sur un vrai téléphone |

@@ -12,7 +12,8 @@ Un seul téléphone est connecté à la fois. Une nouvelle connexion remplace l'
 |---|---|---|
 | `hello` | `protocol` (int), `ua` (user agent), `camera: {w, h}`, `imu` (bool), `gyro_units` (`"deg/s"`), `t_phone` | Premier message obligatoire. Version inconnue : `error` puis fermeture. |
 | `imu` | `samples: [[t, gx, gy, gz, ax, ay, az], …]` | Lot toutes les ~50 ms. `t` en s (horloge du téléphone), gyro dans l'unité annoncée, accélération gravité incluse en m/s², repère appareil W3C. |
-| `ping` | `id`, `t_phone` | Toutes les secondes, pour la synchronisation d'horloge et la mesure du RTT. |
+| `ping` | `id`, `t_phone`, `prev_id`, `rtt` | Toutes les secondes. `rtt` (s) est l'aller-retour mesuré pour le ping `prev_id` (l'échange précédent) : le PC apparie ainsi délai et RTT du même échange. |
+| `notes` | `text` | Notes libres, enregistrées dans `meta.json` de la session. |
 | `bye` | — | Arrêt volontaire. |
 
 ### Messages binaires (images)
@@ -22,13 +23,13 @@ En-tête : `{"type": "frame", "seq": int, "t_phone": float, "w": int, "h": int, 
 - `seq` est strictement croissant.
 - `calib = true` marque une image de calibration, envoyée à pleine résolution et à la demande. Le serveur l'enregistre, mais ne la publie pas sur le bus de traitement.
 
-**Contre-pression** : le téléphone n'envoie l'image `seq` qu'après avoir reçu `ack` pour l'image précédente, ou après `ack_timeout_s` (1 s) en cas de perte. Il saisit toujours l'image la plus récente au moment de l'envoi : rien ne s'accumule.
+**Contre-pression** : le PC acquitte une image **après l'avoir décodée et transmise** au traitement. Le téléphone n'envoie l'image `seq` qu'après avoir reçu `ack` pour l'image précédente, ou après `ack_timeout_s` (1 s) en cas de perte. Il saisit toujours l'image la plus récente au moment de l'envoi : rien ne s'accumule.
 
 ## PC → téléphone (JSON)
 
 | `type` | Champs | Rôle |
 |---|---|---|
-| `welcome` | `protocol`, `session` (nom ou `null`), `max_fps`, `jpeg_quality`, `imu_batch_ms` | Réponse à `hello`, avec les réglages imposés par le PC. |
+| `welcome` | `protocol`, `session` (nom ou `null`), `max_fps`, `jpeg_quality`, `imu_batch_ms`, `capture_width`, `capture_height`, `ack_timeout_s`, `ping_interval_s` | Réponse à `hello`, avec les réglages imposés par le PC. |
 | `ack` | `seq` | Image reçue et décodée. |
 | `pong` | `id`, `t_phone`, `t_pc` | Réponse au ping. |
 | `stats` | `fps_in`, `imu_hz`, `offset_ms`, `rtt_ms`, `frame_age_ms` | Toutes les secondes, pour l'affichage sur le téléphone. |

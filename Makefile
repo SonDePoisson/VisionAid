@@ -1,5 +1,5 @@
 PY := uv run
-.PHONY: setup test-fast test-all lint run-offline run-realtime night calibrate inspect
+.PHONY: setup test-fast test-all lint run-offline run-realtime night calibrate inspect run-phone fake-phone
 
 setup:
 	uv sync
@@ -27,3 +27,9 @@ run-realtime:
 
 night:
 	bash scripts/night_run.sh
+
+run-phone:
+	$(PY) python -m visionaid.apps.run_phone
+
+fake-phone:
+	$(PY) python -m visionaid.phone.fake_phone --duration 30
