@@ -51,8 +51,9 @@ class GuidanceStateMachine:
             return TRACKING_LOST
         alert_th = self.obstacle + (self.hyst if s == OBSTACLE_ALERT else 0.0)
         near_target = x.object_known and x.distance < self.approach
-        # près de la cible, la table/le meuble qui la porte n'est pas un obstacle à signaler
-        if x.obstacle_dist < alert_th and not near_target:
+        # près de la cible, le meuble qui la porte n'est pas un obstacle à signaler ; en recherche
+        # (objet inconnu) l'utilisateur tourne sur place : pas d'alerte
+        if x.obstacle_dist < alert_th and x.object_known and not near_target:
             return OBSTACLE_ALERT
         if not x.object_known:
             return SEARCHING

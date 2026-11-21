@@ -152,6 +152,9 @@ guidance:
   arrived_m: 0.5
   obstacle_m: 0.6
   obstacle_cone_deg: 30.0
+  obstacle_corridor_m: 0.25   # demi-largeur du couloir balayé par le corps
+  final_direct_m: 0.30        # en approche, guidage direct quand le but est plus près
+  approach_lookahead_m: 0.5
   hysteresis_m: 0.15
   min_state_dwell_s: 0.3
   voice_min_interval_s: 3.0

@@ -57,9 +57,17 @@ def relative_direction(T_world_head: np.ndarray, p_world: np.ndarray) -> tuple[f
 
 
 def frontal_obstacle(
-    cm: Costmap | None, T_world_head: np.ndarray, max_dist: float, cone_deg: float
+    cm: Costmap | None,
+    T_world_head: np.ndarray,
+    max_dist: float,
+    cone_deg: float,
+    half_width: float = np.inf,
 ) -> tuple[float, float]:
-    """Distance et azimut de l'obstacle occupé le plus proche dans le cône frontal (inf si aucun)."""
+    """Distance et azimut de l'obstacle occupé le plus proche dans le cône frontal (inf si aucun).
+
+    `half_width` restreint au couloir balayé par le corps (|écart latéral| < half_width) : un
+    obstacle sur le côté d'un chemin dégagé ne déclenche pas d'alerte.
+    """
     if cm is None:
         return math.inf, 0.0
     pos, fwd, left = head_frame(T_world_head)
@@ -76,8 +84,9 @@ def frontal_obstacle(
     x = cm.origin[0] + (jj + b0 + 0.5) * cm.resolution - pos[0]
     y = cm.origin[1] + (ii + a0 + 0.5) * cm.resolution - pos[1]
     d = np.hypot(x, y)
-    az = np.arctan2(x * left[0] + y * left[1], x * fwd[0] + y * fwd[1])
-    m = (np.abs(az) <= math.radians(cone_deg)) & (d <= max_dist)
+    lat = x * left[0] + y * left[1]
+    az = np.arctan2(lat, x * fwd[0] + y * fwd[1])
+    m = (np.abs(az) <= math.radians(cone_deg)) & (d <= max_dist) & (np.abs(lat) < half_width)
     if not m.any():
         return math.inf, 0.0
     k = int(np.argmin(np.where(m, d, np.inf)))
@@ -93,6 +102,9 @@ class GuidanceEngine:
         self.T_cam_head = np.asarray(g.T_cam_head, float)
         self.cone = float(g.obstacle_cone_deg)
         self.obstacle_m = float(g.obstacle_m)
+        self.corridor = float(g.obstacle_corridor_m)
+        self.final_m = float(g.final_direct_m)
+        self.approach_lookahead = float(g.approach_lookahead_m)
         self.voice_interval = float(g.voice_min_interval_s)
         self.t_voice = -math.inf
         self.last_state = None
@@ -128,7 +140,9 @@ class GuidanceEngine:
         if T_head is not None:
             if known:
                 _, _, dist = relative_direction(T_head, obj.position)
-            obst_d, obst_az = frontal_obstacle(cm, T_head, self.obstacle_m + 0.3, self.cone)
+            obst_d, obst_az = frontal_obstacle(
+                cm, T_head, self.obstacle_m + 0.3, self.cone, self.corridor
+            )
         x = GuidanceInputs(t, lost, known, dist, obst_d, path is not None and path.valid)
         state = self.sm.step(x)
         az = el = 0.0
@@ -143,6 +157,21 @@ class GuidanceEngine:
                 az, _, _ = relative_direction(T_head, target)
             elif state in (APPROACHING, ARRIVED):
                 az, el, _ = relative_direction(T_head, obj.position)
+                # approche : on suit la fin du chemin (dégagée) tant que le but est à plus de
+                # `final_direct_m`, puis guidage direct vers l'objet (évite les coins de meubles)
+                if (
+                    state == APPROACHING
+                    and path is not None
+                    and path.valid
+                    and len(path.points) > 1
+                ):
+                    from visionaid.planning.lookahead import lookahead_point
+
+                    head_xy = T_head[:2, 3]
+                    if np.linalg.norm(path.goal - head_xy) > self.final_m:
+                        az, _, _ = relative_direction(
+                            T_head, lookahead_point(path.points, self.approach_lookahead)
+                        )
             elif state == OBSTACLE_ALERT:
                 az = obst_az
                 alert = (

@@ -12,3 +12,4 @@
 | 7 — Planification | ✅ | 9 unit | ~30 min | A*/D* Lite en numba (2,9 ms / 1,9 ms incrémental sur 200×200) |
 | 8 — Logique de guidage | ✅ | 14 unit | ~20 min | priorités, hystérésis 0,15 m, maintien 0,3 s, messages ≥ 3 s |
 | 9 — Audio binaural | ✅ | 8 unit | ~25 min | ITD Woodworth, ILD Brown-Duda, indice arrière, sans clic ni écrêtage |
+| 10 — Simulateur | ✅ | 8 unit + 1 slow (100 graines × 3) | ~2 h | succès 95/94/96 %, sans collision 96/96/99 %, ratio médian ≈ 0,94 ; carte réelle non navigable (informatif) |

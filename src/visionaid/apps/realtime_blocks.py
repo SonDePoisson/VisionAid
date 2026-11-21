@@ -1,0 +1,205 @@
+"""Blocs du graphe temps réel (importables par les sous-processus du bus)."""
+
+from __future__ import annotations
+
+import time
+from collections import OrderedDict
+from typing import Any
+
+import numpy as np
+
+from visionaid.bus.messages import Frame
+from visionaid.utils.config import _to_dataclass, resolve_path
+
+
+def _cfg(raw: dict):
+    return _to_dataclass("config", raw)
+
+
+class ReplaySourceBlock:
+    """Lit la vidéo au rythme réel (en boucle) à partir de l'instant mural `_t0_wall`."""
+
+    def __init__(self, raw: dict) -> None:
+        from visionaid.io.sources import ReplaySource, VideoFileSource
+
+        self.cfg = _cfg(raw)
+        self.raw = raw
+        self._mk = lambda: ReplaySource(
+            VideoFileSource.from_config(self.cfg), float(self.cfg.replay.speed)
+        )
+        self.src = self._mk()
+        self.offset_t = 0.0
+        self.offset_idx = 0
+        self.last: Frame | None = None
+        self.loops = 0
+        self.skipped = 0
+        t0 = float(raw.get("_t0_wall", time.time()))
+        while time.time() < t0:
+            time.sleep(0.001)
+
+    def process(self, inputs: dict[str, Any]) -> dict[str, Any] | None:
+        f = self.src.read()
+        if f is None:  # fin de vidéo : on reboucle (temps et index continus)
+            self.skipped += self.src.skipped
+            if self.last is not None:
+                self.offset_t = self.last.t + 1.0 / self.src.fps
+                self.offset_idx = self.last.frame_idx + 1
+            self.loops += 1
+            self.src = self._mk()
+            f = self.src.read()
+            if f is None:
+                return None
+        f = Frame(f.t + self.offset_t, f.frame_idx + self.offset_idx, f.image, f.K)
+        self.last = f
+        return {"frame": f}
+
+    def stats(self) -> dict:
+        return {"skipped_at_source": self.skipped + self.src.skipped, "loops": self.loops}
+
+
+def make_perception(raw: dict):
+    from visionaid.perception.pipeline import PerceptionBlock
+
+    return PerceptionBlock(_cfg(raw))
+
+
+class GeometryBlock:
+    """Profondeur + odométrie visuelle sur la dernière frame disponible."""
+
+    def __init__(self, raw: dict) -> None:
+        from visionaid.perception.depth import DepthEstimator
+        from visionaid.pose.source import VisualOdometry
+
+        cfg = _cfg(raw)
+        self.depth = DepthEstimator(cfg)  # sans cache : latence réelle
+        self.vo = VisualOdometry(cfg)
+        self.n = 0
+
+    def process(self, inputs: dict[str, Any]) -> dict[str, Any] | None:
+        f = inputs.get("frame")
+        if f is None:
+            return None
+        d = self.depth(f)
+        p = self.vo.update(f, d)
+        self.n += 1
+        return {"depth": d, "pose": p}
+
+    def stats(self) -> dict:
+        return {"n": self.n, "lost_fraction": self.vo.lost_fraction}
+
+
+class WorldBlock:
+    """Modèle du monde ; associe chaque (profondeur, pose) aux détections de la même frame."""
+
+    def __init__(self, raw: dict) -> None:
+        from visionaid.mapping.world_model import WorldModel
+
+        self.cfg = _cfg(raw)
+        self.wm = WorldModel(self.cfg)
+        self.dets: OrderedDict = OrderedDict()
+        self.n = 0
+        self.n_with_dets = 0
+
+    def process(self, inputs: dict[str, Any]) -> dict[str, Any] | None:
+        from visionaid.bus.messages import Pose
+        from visionaid.io.intrinsics import make_intrinsics
+
+        det = inputs.get("detections")
+        if det is not None:
+            self.dets[det.frame_idx] = det
+            while len(self.dets) > 60:
+                self.dets.popitem(last=False)
+        d, p = inputs.get("depth"), inputs.get("pose")
+        if d is None or p is None or d.frame_idx != p.frame_idx:
+            return None
+        h, w = d.depth.shape
+        K = make_intrinsics(self.cfg.intrinsics, w, h).K
+        frame = Frame(
+            d.t, d.frame_idx, np.zeros((1, w, 3), np.uint8), K
+        )  # seuls t, K et la largeur servent
+        dets = self.dets.get(d.frame_idx)
+        self.n += 1
+        self.n_with_dets += dets is not None
+        cm, obj = self.wm.update(frame, d, p, dets)
+        out: dict[str, Any] = {"object": obj}
+        if cm is not None:
+            out["costmap"] = cm
+            out["pose_world"] = Pose(
+                p.t,
+                p.frame_idx,
+                self.wm.T_world_cam,
+                p.quality,
+                p.n_inliers,
+                p.reproj_err,
+                p.is_keyframe,
+            )
+        return out
+
+    def stats(self) -> dict:
+        return {"n": self.n, "with_detections": self.n_with_dets}
+
+
+def make_planner(raw: dict):
+    from visionaid.planning.planner import Planner
+
+    return Planner(_cfg(raw))
+
+
+def make_guidance(raw: dict):
+    from visionaid.guidance.cues import GuidanceEngine
+
+    return GuidanceEngine(_cfg(raw))
+
+
+class CueSink:
+    """Collecte les consignes : latence de bout en bout (capture → consigne), cadence."""
+
+    def __init__(self, raw: dict) -> None:
+        self.t0_wall = float(raw.get("_t0_wall", time.time()))
+        self.lat: list[float] = []
+        self.states: dict[str, int] = {}
+        self.t_first = None
+        self.t_last = None
+        self.out = resolve_path(raw["paths"]["outputs"]) / "realtime_cues.jsonl"
+        self.out.parent.mkdir(parents=True, exist_ok=True)
+        self.fh = open(self.out, "w")  # noqa: SIM115
+
+    def process(self, inputs: dict[str, Any]) -> dict[str, Any] | None:
+        import json
+
+        c = inputs.get("cue")
+        if c is None:
+            return None
+        now = time.time()
+        self.lat.append(now - (self.t0_wall + c.t))
+        self.states[c.state] = self.states.get(c.state, 0) + 1
+        self.t_first = self.t_first or now
+        self.t_last = now
+        self.fh.write(
+            json.dumps(
+                {
+                    "t": c.t,
+                    "idx": c.frame_idx,
+                    "state": c.state,
+                    "az": c.azimuth,
+                    "dist": c.distance if np.isfinite(c.distance) else None,
+                    "lat": self.lat[-1],
+                }
+            )
+            + "\n"
+        )
+        return None
+
+    def close(self) -> None:
+        self.fh.close()
+
+    def stats(self) -> dict:
+        a = np.asarray(self.lat) if self.lat else np.array([np.nan])
+        span = (self.t_last - self.t_first) if self.t_first and self.t_last else 0.0
+        return {
+            "n_cues": len(self.lat),
+            "e2e_p50_ms": float(np.nanpercentile(a, 50) * 1e3),
+            "e2e_p95_ms": float(np.nanpercentile(a, 95) * 1e3),
+            "cue_hz": len(self.lat) / span if span > 0 else 0.0,
+            "states": self.states,
+        }

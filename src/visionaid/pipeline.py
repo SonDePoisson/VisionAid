@@ -1,0 +1,162 @@
+"""Pipeline mono-processus déterministe (mode offline), mêmes blocs que le graphe temps réel."""
+
+from __future__ import annotations
+
+import math
+import time
+from dataclasses import dataclass, field
+
+import numpy as np
+
+from visionaid.bus.messages import Detections, Frame, GuidanceCue, Pose
+from visionaid.guidance.cues import GuidanceEngine
+from visionaid.mapping.world_model import WorldModel
+from visionaid.planning.planner import Planner
+from visionaid.pose.source import VisualOdometry
+from visionaid.utils.timing import LatencyStats, Timer
+
+
+@dataclass
+class FrameRecord:
+    """Résumé d'une frame traitée (pour le rapport et l'évaluation)."""
+
+    frame_idx: int
+    t: float
+    state: str
+    azimuth: float
+    distance: float
+    target_seen: bool
+    pose_quality: str
+    cam_xyz: np.ndarray | None
+    obj_xyz: np.ndarray | None
+    path_valid: bool
+    head_yaw: float = float("nan")  # cap horizontal de la tête (monde, rad)
+
+
+@dataclass
+class OfflinePipeline:
+    """Enchaîne perception → profondeur → pose → carte → planification (5 Hz) → guidage."""
+
+    cfg: object
+    perception: object  # callable(Frame) -> Detections, ou None si détections fournies
+    depth: object  # DepthEstimator
+    stats: LatencyStats = field(default_factory=LatencyStats)
+
+    def __post_init__(self) -> None:
+        self.vo = VisualOdometry(self.cfg)
+        self.world = WorldModel(self.cfg)
+        self.planner = Planner(self.cfg)
+        self.engine = GuidanceEngine(self.cfg)
+        self.plan_period = 1.0 / float(self.cfg.planning.replan_hz)
+        self._t_plan = -math.inf
+        self.path = None
+        self.cues: list[GuidanceCue] = []
+        self.records: list[FrameRecord] = []
+
+    def step(self, frame: Frame, dets: Detections | None = None) -> dict:
+        st = self.stats
+        with Timer(st, "perception"):
+            if dets is None and self.perception is not None:
+                dets = self.perception(frame)
+        with Timer(st, "depth"):
+            depth = self.depth(frame)
+        with Timer(st, "pose"):
+            pose = self.vo.update(frame, depth)
+        with Timer(st, "mapping"):
+            cm, obj = self.world.update(frame, depth, pose, dets)
+        pose_w = None
+        if self.world.T_world_cam is not None:
+            pose_w = Pose(
+                pose.t,
+                pose.frame_idx,
+                self.world.T_world_cam.copy(),
+                pose.quality,
+                pose.n_inliers,
+                pose.reproj_err,
+                pose.is_keyframe,
+            )
+        with Timer(st, "planning"):
+            if (
+                cm is not None
+                and pose_w is not None
+                and obj.state != "unknown"
+                and frame.t - self._t_plan >= self.plan_period - 1e-9
+            ):
+                self.path = self.planner.plan(cm, pose_w.T_world_cam[:2, 3], obj)
+                self._t_plan = frame.t
+        with Timer(st, "guidance"):
+            cue = self.engine.update(
+                frame.t, frame.frame_idx, pose_w if pose_w is not None else pose, obj, self.path, cm
+            )
+        self.cues.append(cue)
+        self.records.append(
+            FrameRecord(
+                frame.frame_idx,
+                frame.t,
+                cue.state,
+                cue.azimuth,
+                cue.distance,
+                dets is not None and dets.target_idx >= 0,
+                pose.quality,
+                None if pose_w is None else pose_w.T_world_cam[:3, 3].copy(),
+                obj.position.copy() if np.isfinite(obj.position).all() else None,
+                self.path is not None and self.path.valid,
+                head_yaw(pose_w.T_world_cam) if pose_w is not None else float("nan"),
+            )
+        )
+        return {
+            "frame": frame,
+            "dets": dets,
+            "depth": depth,
+            "pose": pose,
+            "pose_world": pose_w,
+            "costmap": cm,
+            "object": obj,
+            "path": self.path,
+            "cue": cue,
+        }
+
+
+def guidance_coherence(records: list[FrameRecord], fps: float, horizon_s: float = 1.0) -> dict:
+    """Angle entre l'azimut de guidage et la direction réelle de déplacement dans la seconde
+    suivante, sur les segments où la caméra se rapproche de la gourde (informatif)."""
+    k = int(round(horizon_s * fps))
+    angles = []
+    for i in range(len(records) - k):
+        a, b = records[i], records[i + k]
+        if (
+            a.state not in ("NAVIGATING", "APPROACHING")
+            or a.cam_xyz is None
+            or b.cam_xyz is None
+            or a.obj_xyz is None
+        ):
+            continue
+        move = b.cam_xyz[:2] - a.cam_xyz[:2]
+        if np.linalg.norm(move) < 0.15:  # quasi immobile
+            continue
+        d0 = np.linalg.norm(a.obj_xyz[:2] - a.cam_xyz[:2])
+        d1 = np.linalg.norm(a.obj_xyz[:2] - b.cam_xyz[:2])
+        if d1 >= d0:  # ne se rapproche pas
+            continue
+        if not math.isfinite(a.head_yaw):
+            continue
+        guide = a.head_yaw + a.azimuth  # direction de guidage dans le monde
+        az_move = math.atan2(move[1], move[0])
+        diff = math.atan2(math.sin(az_move - guide), math.cos(az_move - guide))
+        angles.append(abs(math.degrees(diff)))
+    if not angles:
+        return {"n": 0, "median_deg": None}
+    return {
+        "n": len(angles),
+        "median_deg": float(np.median(angles)),
+        "p75_deg": float(np.percentile(angles, 75)),
+    }
+
+
+def head_yaw(T_world_cam: np.ndarray) -> float:
+    f = T_world_cam[:2, 2]
+    return math.atan2(f[1], f[0])
+
+
+def now() -> float:
+    return time.perf_counter()

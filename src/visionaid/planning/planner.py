@@ -69,6 +69,7 @@ class Planner:
         self.allow_unknown = bool(p.allow_unknown)
         self.lookahead_m = float(p.lookahead_m)
         self.search_r = float(p.target_search_radius_m)
+        self.body_clearance = float(cfg.guidance.obstacle_corridor_m)
         self.dstar: DStarLite | None = None
         self._dkey = None
         self.n_plans = 0
@@ -121,8 +122,32 @@ class Planner:
             else np.vstack([user_xy[None, :2], pts])
         )
         goal_xy = world_of(goal, origin, res)
-        la = lookahead_point(pts, self.lookahead_m)
+        la = self._lookahead_los(cm, pts, s_ij, start, origin, res)
         return Path(t, idx, pts, la, goal_xy, True, polyline_length(pts))
+
+    def _lookahead_los(self, cm: Costmap, pts, user_ij, start, origin, res) -> np.ndarray:
+        """Point d'anticipation le plus loin (≤ lookahead_m) en ligne de vue de l'utilisateur.
+
+        La ligne de vue est testée depuis la position réelle sur une grille où seules les cellules
+        à moins de `body_clearance_m` d'un obstacle sont bloquantes : la direction donnée ne mène
+        jamais droit sur un obstacle, même quand l'utilisateur a dérivé hors du chemin. Sans
+        cette contrainte, la corde vers un point situé après un virage coupe le coin.
+        """
+        from visionaid.planning.lookahead import line_of_sight
+
+        clear = distance_to_obstacles(cm.state, res)
+        body = np.where(clear >= self.body_clearance, 0.0, np.inf)
+        h, w = body.shape
+        src = user_ij if np.isfinite(body[user_ij]) else start
+        d = self.lookahead_m
+        while d > 0.15:
+            p = lookahead_point(pts, d)
+            ij = cell_of(p, origin, res)
+            if 0 <= ij[0] < h and 0 <= ij[1] < w and line_of_sight(body, src, ij):
+                return p
+            d -= 0.1
+        # aucune visée sûre : on rejoint d'abord la cellule dégagée du départ
+        return world_of(start, origin, res) if start != user_ij else lookahead_point(pts, 0.3)
 
     # interface Block du bus
     def process(self, inputs: dict[str, Any]) -> dict[str, Any] | None:

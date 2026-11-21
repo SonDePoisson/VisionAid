@@ -50,7 +50,10 @@ class PerceptionBlock:
         f = inputs.get("frame")
         if f is None:
             return None
-        return {"detections": self(f)}
+        d = self(f)
+        if d.masks is not None and d.masks.dtype == bool:  # masques compressés pour le bus
+            d.masks = np.packbits(d.masks, axis=-1)
+        return {"detections": d}
 
 
 def make_perception_block(cfg_raw: dict) -> PerceptionBlock:

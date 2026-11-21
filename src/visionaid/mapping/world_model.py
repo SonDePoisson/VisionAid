@@ -128,3 +128,21 @@ def run_mapping_video(cfg, dets_by_idx: dict | None = None):
             }
         )
     return wm, records
+
+
+def export_real_map(wm: WorldModel, records: list[dict], path) -> None:
+    """Sauvegarde la costmap finale (scénario « carte réelle » du simulateur)."""
+    from pathlib import Path
+
+    s = wm.grid.state()
+    traj = [r["T_world_cam"][:3, 3] for r in records if r["T_world_cam"] is not None]
+    obj = records[-1]["object"].position
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        path,
+        state=s,
+        origin=wm.grid.origin,
+        res=wm.grid.res,
+        obj=obj,
+        start=traj[0] if traj else np.zeros(3),
+    )
