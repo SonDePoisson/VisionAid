@@ -14,3 +14,4 @@
 | 9 — Audio binaural | ✅ | 8 unit | ~25 min | ITD Woodworth, ILD Brown-Duda, indice arrière, sans clic ni écrêtage |
 | 10 — Simulateur | ✅ | 8 unit + 1 slow (100 graines × 3) | ~2 h | succès 95/94/96 %, sans collision 96/96/99 %, ratio médian ≈ 0,94 ; carte réelle non navigable (informatif) |
 | 11 — Intégration | ✅ (latence ⚠️) | 1 unit/integration (stubs) + 5 slow | ~1 h 15 | offline 485 frames en 72 s, ARRIVED à 0,23 m, cohérence guidage 7° (médiane) ; temps réel 30 s OK, p95 ≈ 450-650 ms > 300 ms |
+| 12 — Optimisations | ⚠️ partiel | — | ~15 min | export CoreML testé, non retenu (écart de score 5,8 %, plus lent) ; DA3-Small et graphe de poses non faits |
