@@ -157,8 +157,11 @@ def test_goal_is_free_cell_near_object_on_furniture():
     path = Planner(cfg).plan(cm, np.array([0.5, 2.0]), obj)
     assert path.valid
     gi, gj = int(path.goal[1] / g.res), int(path.goal[0] / g.res)
-    assert np.isfinite(cm.cost[gi, gj])
-    # au bord de la zone gonflée de la table, du côté de l'utilisateur
+    assert st[gi, gj] != OCC
+    # phase 27 : but « à portée de main » (≤ 0,70 m de l'objet), marge réduite à 0,20 m près de
+    # l'objet (au lieu de 0,35 m) : au bord de la table, du côté de l'utilisateur
+    assert np.linalg.norm(path.goal - obj.position[:2]) <= cfg.planning.reach_m + 0.05
+    assert 2.5 - path.goal[0] >= cfg.planning.approach_clearance_m - 0.05  # ≥ 20 cm de la table
     assert 2.0 < path.goal[0] < 2.5 + 1e-6
 
 

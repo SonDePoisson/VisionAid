@@ -160,6 +160,11 @@ planning:
   commit_ratio: 0.2        # garde le chemin précédent s'il fait au plus +20 % …
   commit_margin_m: 0.3     # … + 30 cm de plus que le nouveau, et reste praticable
   near_goal_m: 0.35        # chemin restant plus court : la visée pointe vers l'objet
+  reach_m: 0.70            # but « à portée de main » : on attrape l'objet depuis le bord d'une table
+  approach_zone_m: 2.0     # près de l'objet (≤ 2 m : tout un passage, marge comprise) …
+  approach_clearance_m: 0.20  # … la marge passe de 0,35 m à 0,20 m (demi-largeur du corps)
+  approach_penalty: 3.0    # coût des cellules ainsi relâchées (on ne s'y engage que si utile)
+  goal_keep_ratio: 0.15    # hystérésis du but : garde le précédent s'il reste à +15 % du meilleur
 
 guidance:
   approach_m: 1.2

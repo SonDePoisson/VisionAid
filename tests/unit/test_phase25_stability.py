@@ -47,7 +47,10 @@ def obj():
 
 
 def run_seq(commit: bool, n: int = 10):
-    ov = {} if commit else {"planning.commit_ratio": 0.0}
+    # mécanisme d'engagement isolé : planificateur D* sans le but « à portée de main » (phase 27)
+    ov = {"planning.reach_m": 0.0}
+    if not commit:
+        ov["planning.commit_ratio"] = 0.0
     pl = Planner(load_config(overrides=ov))
     sides = []
     for k in range(n):
