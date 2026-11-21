@@ -140,8 +140,10 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--duration", type=float, default=None)
     ap.add_argument("--session", default=None, help="dossier de session téléphone à rejouer")
+    ap.add_argument("--target", default=None, help="prompt fixe, ex. « où sont mes clés »")
     args = ap.parse_args(argv)
-    s = run(args.duration, session=args.session)
+    raw = load_raw(overrides={"target.query": args.target} if args.target else None)
+    s = run(args.duration, raw, session=args.session)
     update_report("realtime", s)
     log.info("Temps réel : %s", s["e2e_latency"])
     return s

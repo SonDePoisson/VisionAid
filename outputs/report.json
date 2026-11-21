@@ -14,19 +14,19 @@
     "reid_backend": "dinov2",
     "threshold": 0.5754,
     "n_frames": 485,
-    "perception_fps": 23.515832817944766,
-    "perception_ms_p50": 39.437708001059946,
+    "perception_fps": 25.69595290372723,
+    "perception_ms_p50": 38.785958000516985,
     "image_shape": [
       1138,
       640
     ],
     "device": "mps",
-    "confirmed_fraction": 0.6,
-    "n_target_tracks": 4,
+    "confirmed_fraction": 0.6412371134020619,
+    "n_target_tracks": 2,
     "first_confirmed_frame": 104,
-    "color_check_frames": 291,
+    "color_check_frames": 311,
     "color_incompatible": 0,
-    "detector_fps": 53.548411551653324
+    "detector_fps": 50.04756604088079
   },
   "depth": {
     "backend": "depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf",

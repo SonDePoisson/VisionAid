@@ -42,6 +42,8 @@ def main(argv=None) -> dict:
     overrides = {}
     if args.height:
         overrides["body.camera_height_m"] = args.height
+    if args.target:  # vérifie dès maintenant que la cible est connue
+        overrides["target.query"] = args.target
     cfg = load_config(overrides=overrides)
     meta = {"target": args.target, "notes": args.notes}
     srv = PhoneServer(cfg, record=args.record, meta=meta).start()

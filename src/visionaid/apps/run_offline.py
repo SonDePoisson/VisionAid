@@ -227,8 +227,15 @@ def main(argv=None):
         "--session", default=None, help="dossier de session téléphone (data/sessions/…)"
     )
     ap.add_argument("--max-frames", type=int, default=None)
+    ap.add_argument("--target", default=None, help="prompt fixe, ex. « où sont mes clés »")
     args = ap.parse_args(argv)
-    return run(load_config(args.config), args.session or args.video, max_frames=args.max_frames)
+    target = args.target
+    if target is None and args.session:  # cible déclarée à l'enregistrement de la session
+        from visionaid.io.session import load_session
+
+        target = load_session(args.session).meta.get("target")
+    cfg = load_config(args.config, {"target.query": target} if target else None)
+    return run(cfg, args.session or args.video, max_frames=args.max_frames)
 
 
 if __name__ == "__main__":

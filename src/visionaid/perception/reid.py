@@ -189,6 +189,36 @@ class ColorModel:
         return float(np.sqrt(so * sg))
 
 
+def make_color_model(rcfg) -> ColorModel | None:
+    """Modèle de couleur de la fiche cible (`reid.color_model`) ; None si `none`."""
+    kind = str(getattr(rcfg, "color_model", "orange_gray") or "orange_gray")
+    if kind == "none":
+        return None
+    if kind != "orange_gray":
+        raise ValueError(f"modèle de couleur inconnu : {kind}")
+    return ColorModel.from_cfg(rcfg)
+
+
+class TextOnlyReID:
+    """Cible sans photo de référence : décision sur la seule confiance du détecteur (prompt texte).
+
+    Le score d'une détection est sa confiance ; le seuil est `reid.textonly_conf`. Limite assumée :
+    pas de distinction entre deux objets de la même catégorie (consigné dans le rapport).
+    """
+
+    text_only = True
+    backend = "text-only"
+
+    def __init__(self, cfg) -> None:
+        self.threshold = float(getattr(cfg.reid, "textonly_conf", 0.35))
+        self.gallery = None
+
+    def score_detections(self, image, boxes, masks, scores=None) -> np.ndarray:
+        if scores is None:
+            return np.zeros(len(boxes), np.float32)
+        return np.asarray(scores, np.float32)
+
+
 def hsv_hist(crop: np.ndarray, mask: np.ndarray) -> np.ndarray:
     """Histogramme H-S normalisé (16×8) sous le masque."""
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
@@ -245,9 +275,9 @@ class TargetReID:
             embedder, backend = make_embedder(cfg)
         self.embedder = embedder
         self.backend = backend or type(embedder).__name__
-        self.colors = ColorModel.from_cfg(r)
+        self.colors = make_color_model(r)  # None : cible sans couleur distinctive
         self.w_embed = float(r.w_embed)
-        self.w_color = float(r.w_color)
+        self.w_color = float(r.w_color) if self.colors is not None else 0.0
         self.gallery: np.ndarray | None = None
         self.gallery_hists: list[np.ndarray] = []
         self.ref_crops: list[tuple[np.ndarray, np.ndarray]] = []
@@ -285,6 +315,8 @@ class TargetReID:
         return sims.max(axis=1).astype(np.float32)
 
     def color_score(self, crop: np.ndarray, mask: np.ndarray) -> float:
+        if self.colors is None:
+            return 1.0  # sans modèle de couleur : neutre (w_color = 0)
         prop = self.colors.proportion_score(crop, mask)
         h = hsv_hist(crop, mask)
         hs = max((hist_similarity(h, g) for g in self.gallery_hists), default=0.0)
@@ -296,6 +328,8 @@ class TargetReID:
             return np.zeros(0, np.float32)
         emb = self.embed_scores([c for c, _ in items])
         emb01 = np.clip(emb, 0.0, 1.0)
+        if self.w_color <= 0:
+            return emb01.astype(np.float32)
         col = np.array([self.color_score(c, m) for c, m in items], np.float32)
         return combine_scores(emb01, col, self.w_embed, self.w_color)
 
@@ -337,7 +371,7 @@ def reference_crops(
     Le crop est extrait à pleine résolution puis réduit ; la détection est faite sur une image
     de largeur `work_width` (la gourde peut être petite dans la scène).
     """
-    colors = ColorModel.from_cfg(cfg.reid)
+    colors = make_color_model(cfg.reid)
     out = []
     for p in ref_paths:
         full = cv2.imread(str(p))
@@ -351,7 +385,10 @@ def reference_crops(
         best, best_sc = None, -1.0
         for i, b in enumerate(d.boxes):
             crop, m = masked_crop(small, b, None if d.masks is None else d.masks[i])
-            sc = colors.proportion_score(crop, m) + 0.2 * float(d.scores[i])
+            # avec un modèle de couleur : la couleur départage ; sinon la détection la plus sûre
+            sc = (colors.proportion_score(crop, m) if colors is not None else 0.0) + 0.2 * float(
+                d.scores[i]
+            )
             if sc > best_sc:
                 best, best_sc = i, sc
         if best is None:

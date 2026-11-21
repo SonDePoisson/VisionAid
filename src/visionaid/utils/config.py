@@ -47,6 +47,17 @@ def load_raw(path: str | Path | None = None, overrides: dict | None = None) -> d
     """Charge le YAML brut, applique les surcharges (dict imbriqué ou clés pointées)."""
     with open(path or DEFAULT_CONFIG) as fh:
         raw = yaml.safe_load(fh) or {}
+    _apply_overrides(raw, overrides)
+    query = (raw.get("target") or {}).get("query")
+    if query:  # prompt fixe : la fiche cible surcharge la config, les surcharges explicites priment
+        from visionaid.perception.target import apply_target
+
+        apply_target(raw, query)
+        _apply_overrides(raw, {k: v for k, v in (overrides or {}).items() if k != "target.query"})
+    return raw
+
+
+def _apply_overrides(raw: dict, overrides: dict | None) -> None:
     for key, val in (overrides or {}).items():
         if "." in key:
             node = raw
@@ -58,7 +69,6 @@ def load_raw(path: str | Path | None = None, overrides: dict | None = None) -> d
             _deep_update(raw[key], val)
         else:
             raw[key] = val
-    return raw
 
 
 def load_config(path: str | Path | None = None, overrides: dict | None = None) -> Any:

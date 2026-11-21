@@ -12,7 +12,13 @@ import numpy as np
 import yaml
 
 from visionaid.perception.detector import YoloDetector
-from visionaid.perception.reid import TargetReID, augment, masked_crop, reference_crops
+from visionaid.perception.reid import (
+    TargetReID,
+    TextOnlyReID,
+    augment,
+    masked_crop,
+    reference_crops,
+)
 from visionaid.utils.config import load_config, resolve_path
 from visionaid.utils.logging import get_logger
 
@@ -20,9 +26,19 @@ log = get_logger("calibrate")
 
 
 def build_reid(cfg, detector=None) -> tuple[TargetReID, list, YoloDetector]:
-    """Détecteur + ReID avec galerie construite sur les photos de référence."""
+    """Détecteur + ReID avec galerie construite sur les photos de référence.
+
+    Sans photo de référence pour la cible : ReID « texte seul » (confiance du détecteur).
+    """
     det = detector or YoloDetector(cfg)
     refs = sorted(resolve_path(cfg.paths.ref_dir).glob(cfg.paths.ref_glob))
+    if not refs:
+        log.warning(
+            "Aucune photo de référence (%s/%s) : cible reconnue par le texte seul",
+            cfg.paths.ref_dir,
+            cfg.paths.ref_glob,
+        )
+        return TextOnlyReID(cfg), [], det
     rc = reference_crops(cfg, det, refs)
     if not rc:
         raise RuntimeError("Aucune référence exploitable")
@@ -49,13 +65,17 @@ def positive_items(ref_crops, n_aug: int, seed: int = 1) -> list[tuple[np.ndarra
 
 def collect_negatives(cfg, video: Path, step: int = 5, cache: bool = True) -> list[dict]:
     """Crops (masqués) d'objets détectés avec le prompt large, toutes les `step` frames."""
-    from visionaid.io.sources import VideoFileSource
+    from visionaid.io.session import open_media
 
-    cpath = resolve_path(cfg.paths.cache) / "reid" / f"negatives_{video.stem}_{step}.pkl"
+    tag = "_".join(cfg.detector.negative_prompts)[:40].replace(" ", "-")
+    cpath = resolve_path(cfg.paths.cache) / "reid" / f"negatives_{video.stem}_{step}_{tag}.pkl"
+    legacy = resolve_path(cfg.paths.cache) / "reid" / f"negatives_{video.stem}_{step}.pkl"
+    if cache and not cpath.exists() and legacy.exists() and str(cfg.target.name) == "gourde":
+        cpath = legacy  # cache de la phase 3 (prompts de la gourde)
     if cache and cpath.exists():
         return pickle.loads(cpath.read_bytes())
     det = YoloDetector(cfg, prompts=list(cfg.detector.negative_prompts))
-    src = VideoFileSource.from_config(cfg, path=video)
+    src = open_media(cfg, video)  # vidéo ou session téléphone
     items = []
     while (f := src.read()) is not None:
         if f.frame_idx % step:
@@ -86,7 +106,9 @@ def split_negatives(
     emb = reid.embed_scores([it["crop"] for it in items])
     keep, excl = [], []
     for it, e in zip(items, emb, strict=True):
-        prop = reid.colors.proportion_score(it["crop"], it["mask"])
+        prop = (
+            reid.colors.proportion_score(it["crop"], it["mask"]) if reid.colors is not None else 0.0
+        )
         it["emb"] = float(e)
         it["prop"] = float(prop)
         (excl if (e >= exclude_sim or (e >= exclude_sim_color and prop >= 0.5)) else keep).append(
@@ -123,12 +145,23 @@ def main(argv: list[str] | None = None) -> dict:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--config", default=None)
     ap.add_argument("--step", type=int, default=5)
+    ap.add_argument("--target", default=None, help="prompt fixe, ex. « où sont mes clés »")
+    ap.add_argument(
+        "--negatives",
+        default=None,
+        help="vidéo ou session d'où tirer les négatifs (défaut : vidéo)",
+    )
     args = ap.parse_args(argv)
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, {"target.query": args.target} if args.target else None)
     reid, rc, _det = build_reid(cfg)
+    if getattr(reid, "text_only", False):
+        raise SystemExit(
+            f"Pas de photo de référence ({cfg.paths.ref_glob}) : rien à calibrer pour "
+            f"« {cfg.target.name} » (mode texte seul, seuil reid.textonly_conf)."
+        )
     pos_items = positive_items(rc, int(cfg.reid.n_calib_aug))
     pos = reid.score_crops(pos_items)
-    video = resolve_path(cfg.paths.video)
+    video = resolve_path(args.negatives or cfg.paths.video)
     negs_all = collect_negatives(cfg, video, args.step) if video.exists() else []
     negs, excl = split_negatives(reid, negs_all)
     neg = reid.score_crops([(it["crop"], it["mask"]) for it in negs]) if negs else np.zeros(0)

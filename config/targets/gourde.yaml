@@ -1,0 +1,24 @@
+# Fiche cible : gourde grise et orange (référence de la phase 1, calibrée en phase 3)
+name: gourde
+label: ma gourde
+phrases:
+  - où est ma gourde
+  - ma gourde
+  - gourde
+  - bouteille d'eau
+  - trouve ma gourde
+# surcharges de config/default.yaml appliquées quand cette cible est choisie
+overrides:
+  target:
+    name: gourde
+    height_m: 0.25
+  detector:
+    text_prompts: ["water bottle", "bottle", "flask"]
+    negative_prompts: ["cup", "bottle", "chair", "bag", "box"]
+  paths:
+    ref_glob: "gourde_*.jpg"
+  reid:
+    color_model: orange_gray
+    w_embed: 0.6
+    w_color: 0.4
+    threshold_file: config/reid_threshold.yaml

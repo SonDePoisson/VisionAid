@@ -11,6 +11,8 @@ paths:
 target:
   name: gourde
   height_m: 0.25          # hauteur réelle de la gourde (contrôle d'échelle)
+  query: null             # prompt fixe (« où sont mes clés ») ; résolu via config/targets/*.yaml
+  sheets_dir: config/targets
 
 video:
   width: 640              # largeur après redimensionnement (px)
@@ -49,8 +51,10 @@ reid:
   backend: auto           # auto | dinov2 | clip | stub
   model: facebook/dinov2-small
   clip_model: openai/clip-vit-base-patch32
+  color_model: orange_gray  # orange_gray | none
   w_embed: 0.6
   w_color: 0.4
+  textonly_conf: 0.35       # cible sans photo de référence : confiance de détection minimale
   crop_size: 224
   n_augment_gallery: 12
   threshold_file: config/reid_threshold.yaml
