@@ -27,10 +27,14 @@ class RerunLogger:
         self,
         path: str | Path,
         enabled: bool = True,
-        image_every: int = 1,
-        cloud_every: int = 5,
-        cloud_step: int = 8,
+        image_every: int = 2,
+        cloud_every: int = 10,
+        cloud_step: int = 10,
+        depth_every: int = 6,
+        depth_down: int = 4,
     ) -> None:
+        self.depth_every = depth_every
+        self.depth_down = depth_down
         self.enabled = enabled
         self.image_every = image_every
         self.cloud_every = cloud_every
@@ -89,8 +93,13 @@ class RerunLogger:
                 "world/camera/image/rgb",
                 rr.Image(frame.image[:, :, ::-1]).compress(jpeg_quality=80),
             )
-            if depth is not None:
-                rr.log("world/camera/image/depth", rr.DepthImage(depth.depth, meter=1.0))
+        if depth is not None and k % self.depth_every == 0:
+            dd = (
+                depth.depth[:: self.depth_down, :: self.depth_down]
+                .astype(np.float16)
+                .astype(np.float32)
+            )
+            rr.log("depth", rr.DepthImage(dd, meter=1.0))
         if dets is not None and len(dets.boxes):
             labels = []
             colors = []
@@ -106,7 +115,7 @@ class RerunLogger:
                     array=dets.boxes, array_format=rr.Box2DFormat.XYXY, labels=labels, colors=colors
                 ),
             )
-        if cm is not None and k % 3 == 0:
+        if cm is not None and k % 10 == 0:
             img = np.full(cm.state.shape + (3,), 128, np.uint8)
             img[cm.state == FREE] = 255
             img[cm.state == OCC] = 0

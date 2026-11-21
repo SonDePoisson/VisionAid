@@ -62,7 +62,7 @@ def graph(raw: dict) -> list[NodeSpec]:
             f"{B}:make_guidance",
             inputs=["pose_world", "object", "path", "costmap"],
             outputs=["cue"],
-            trigger="pose_world",
+            trigger=None,  # minuteur 20 Hz sur les dernières entrées
             rate_hz=float(rt["cue_hz"]),
             heavy_inputs=["costmap"],
         ),

@@ -118,6 +118,12 @@ class WorldBlock:
             d.t, d.frame_idx, np.zeros((1, w, 3), np.uint8), K
         )  # seuls t, K et la largeur servent
         dets = self.dets.get(d.frame_idx)
+        if dets is None and self.dets:
+            # perception et géométrie traitent des frames différentes (conflation) : on accepte
+            # la détection la plus proche à ±3 frames (≤ 100 ms)
+            k = min(self.dets, key=lambda i: abs(i - d.frame_idx))
+            if abs(k - d.frame_idx) <= 3:
+                dets = self.dets[k]
         self.n += 1
         self.n_with_dets += dets is not None
         cm, obj = self.wm.update(frame, d, p, dets)
@@ -171,10 +177,14 @@ class CueSink:
         if c is None:
             return None
         now = time.time()
-        self.lat.append(now - (self.t0_wall + c.t))
-        self.states[c.state] = self.states.get(c.state, 0) + 1
         self.t_first = self.t_first or now
         self.t_last = now
+        self.n_all = getattr(self, "n_all", 0) + 1
+        if c.frame_idx == getattr(self, "_last_idx", None):
+            return None  # consigne répétée (minuteur 20 Hz) : latence comptée une seule fois
+        self._last_idx = c.frame_idx
+        self.lat.append(now - (self.t0_wall + c.t))
+        self.states[c.state] = self.states.get(c.state, 0) + 1
         self.fh.write(
             json.dumps(
                 {
@@ -200,6 +210,7 @@ class CueSink:
             "n_cues": len(self.lat),
             "e2e_p50_ms": float(np.nanpercentile(a, 50) * 1e3),
             "e2e_p95_ms": float(np.nanpercentile(a, 95) * 1e3),
-            "cue_hz": len(self.lat) / span if span > 0 else 0.0,
+            "cue_hz": getattr(self, "n_all", 0) / span if span > 0 else 0.0,
+            "fresh_cue_hz": len(self.lat) / span if span > 0 else 0.0,
             "states": self.states,
         }
