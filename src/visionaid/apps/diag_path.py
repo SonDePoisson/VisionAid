@@ -162,7 +162,13 @@ def _aim_series(detail: dict) -> tuple[np.ndarray, np.ndarray]:
     return np.array(ts), np.array(ds)
 
 
-def compare(before: Path, after: Path, out_png: Path, sim: tuple | None = None) -> Path:
+def compare(
+    before: Path,
+    after: Path,
+    out_png: Path,
+    sim: tuple | None = None,
+    title: str = "Chemin vers l'objet — avant / après",
+) -> Path:
     """Image avant/après : pour chaque session, quand un chemin valide existe, et l'écart de la
     direction de visée ; tableau des indicateurs (et du simulateur si fourni)."""
     import matplotlib
@@ -316,7 +322,7 @@ def compare(before: Path, after: Path, out_png: Path, sim: tuple | None = None) 
         elif c == 3:
             cell.set_text_props(color=INK, weight="bold")
     fig.suptitle(
-        "Chemin vers l'objet — avant / après (A cible probable, B carte fiable, C stabilité)",
+        title,
         x=0.01,
         ha="left",
         fontsize=13,
@@ -347,12 +353,15 @@ def main(argv=None) -> list[dict]:
         "--sim", nargs=2, metavar=("SIM_AVANT", "SIM_APRES"), help="résultats simulateur (JSON)"
     )
     ap.add_argument("--png", default="outputs/diag/comparaison.png")
+    ap.add_argument("--title", default="Chemin vers l'objet — avant / après")
     args = ap.parse_args(argv)
     if args.compare:
         sim = None
         if args.sim:
             sim = tuple(json.loads(Path(p).read_text()) for p in args.sim)
-        png = compare(Path(args.compare[0]), Path(args.compare[1]), resolve_path(args.png), sim)
+        png = compare(
+            Path(args.compare[0]), Path(args.compare[1]), resolve_path(args.png), sim, args.title
+        )
         print(f"Comparaison : {png}")
         return []
     dirs = [Path(p) for p in args.sessions]
