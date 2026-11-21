@@ -1,6 +1,7 @@
 """Export d'une session en trois vidéos MP4 (H.264, lisibles par PowerPoint et Keynote).
 
 - `camera.mp4`  : image de la caméra, détections (cible en orange), état du guidage ;
+  (les trois vidéos portent la piste du guidage sonore, aussi écrite dans `guidage.wav`)
 - `carte.mp4`   : carte des obstacles vue de dessus, trajectoire, position et cap, chemin, cible ;
 - `monde3d.mp4` : scène 3D (sol quadrillé, obstacles, nuage de points, trajectoire, chemin, cible).
 
@@ -42,8 +43,11 @@ STATE_FR = {
 }
 
 
-def replay(session_dir, cfg=None, cloud_every: int = 2) -> tuple[list[dict], float]:
-    """Rejoue la session ; renvoie, par image, ce qu'il faut pour les trois vidéos."""
+def replay(session_dir, cfg=None, cloud_every: int = 2, with_audio: bool = False):
+    """Rejoue la session ; renvoie, par image, ce qu'il faut pour les trois vidéos, et la cadence.
+
+    Avec `with_audio`, renvoie aussi la piste stéréo du guidage sonore (même directeur sonore que
+    le téléphone : `audio.director`) et sa fréquence d'échantillonnage."""
     from visionaid.io.session import SessionImu, SessionSource, load_session
     from visionaid.mapping.geometry import backproject, transform
     from visionaid.perception.depth import video_depth_estimator
@@ -97,7 +101,15 @@ def replay(session_dir, cfg=None, cloud_every: int = 2) -> tuple[list[dict], flo
                 "cloud": last_cloud,
             }
         )
-    return out, float(src.fps)
+    if not with_audio:
+        return out, float(src.fps)
+    from visionaid.audio.renderer import AudioRenderer
+
+    ar = AudioRenderer(cfg.audio)
+    t_first = pipe.records[0].t if pipe.records else 0.0
+    duration = len(out) / float(src.fps)
+    stereo = ar.render(pipe.cues, t_first, duration)
+    return out, float(src.fps), stereo, ar
 
 
 # ---------------------------------------------------------------------------- caméra
@@ -390,7 +402,7 @@ class Mp4Writer:
 
 
 def export(session_dir, out_dir, which=("camera", "carte", "monde3d")) -> dict[str, Path]:
-    frames, fps = replay(session_dir)
+    frames, fps, stereo, ar = replay(session_dir, with_audio=True)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     ext = map_extent(frames)
@@ -411,7 +423,27 @@ def export(session_dir, out_dir, which=("camera", "carte", "monde3d")) -> dict[s
             log.info("Export : image %d / %d", k, len(frames))
     for w in writers.values():
         w.close()
-    return {w: out / f"{w}.mp4" for w in which}
+    # guidage sonore : piste WAV, puis ajoutée à chaque vidéo (le son de la chaîne complète)
+    wav = out / "guidage.wav"
+    ar.write_wav(wav, stereo)
+    res = {}
+    for w in which:
+        v = out / f"{w}.mp4"
+        res[w] = v
+        if shutil.which("ffmpeg"):
+            tmp = out / f"_{w}_son.mp4"
+            ok = subprocess.run(
+                [
+                    "ffmpeg", "-v", "error", "-y", "-i", str(v), "-i", str(wav),
+                    "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                    "-shortest", "-movflags", "+faststart", str(tmp),
+                ],
+                timeout=300,
+            )  # fmt: skip
+            if ok.returncode == 0:
+                tmp.replace(v)
+    res["guidage"] = wav
+    return res
 
 
 def main(argv=None) -> dict:
