@@ -119,7 +119,23 @@ uv run python -m visionaid.apps.run_live --fake-phone data/video/appart.mp4 --du
 
 ---
 
-## 6. Tests et vérifications
+## 6. Diagnostic du chemin (qualité du guidage sur les sessions)
+
+Mesure, pour chaque session de navigation : quand le premier chemin valide apparaît, le temps passé en recherche, le taux de chemins valides, les départs bloqués et les sauts de direction.
+```bash
+uv run python -m visionaid.apps.diag_path --all --out outputs/diag
+```
+Comparer deux diagnostics, par exemple avant et après une modification, et produire l'image de comparaison :
+```bash
+uv run python -m visionaid.apps.diag_path --compare outputs/diag_avant outputs/diag --png outputs/diag/comparaison.png
+```
+```bash
+open outputs/diag/comparaison.png
+```
+
+---
+
+## 7. Tests et vérifications
 
 ```bash
 make test-fast
@@ -136,7 +152,7 @@ Tout (tests, rejeux, direct simulé), journal dans `outputs/night_run.log`.
 
 ---
 
-## 7. Dépannage rapide
+## 8. Dépannage rapide
 
 | Problème | Solution |
 |---|---|
