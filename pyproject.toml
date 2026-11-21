@@ -34,6 +34,7 @@ packages = ["src/visionaid"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
 timeout = 120
 markers = [
     "unit: tests rapides synthétiques",

@@ -56,10 +56,10 @@ reid:
   threshold_file: config/reid_threshold.yaml
   default_threshold: 0.6
   # Couleurs HSV (OpenCV : H dans [0,180], S,V dans [0,255])
-  orange_h: [5, 25]
-  orange_s_min: 90
-  orange_v_min: 80
-  gray_s_max: 50
+  orange_h: [5, 30]
+  orange_s_min: 150
+  orange_v_min: 100
+  gray_s_max: 140
   gray_v_min: 50
   orange_frac_ref: 0.30    # fraction d'orange attendue (normalisation du score)
   gray_frac_ref: 0.35

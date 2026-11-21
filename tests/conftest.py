@@ -59,3 +59,23 @@ def synthetic_video(tmp_path: Path) -> tuple[Path, int]:
     p = tmp_path / "synth.mp4"
     n = make_synthetic_video(p)
     return p, n
+
+
+@pytest.fixture(scope="session")
+def reid_bundle():
+    """(reid, ref_crops, detector) avec les vrais modèles (tests slow)."""
+    if not ref_paths():
+        pytest.skip("Aucune photo de référence")
+    from visionaid.apps.calibrate_reid import build_reid
+
+    return build_reid(load_config())
+
+
+@pytest.fixture(scope="session")
+def video_perception(video_path):
+    """Perception complète de la vidéo (mise en cache disque)."""
+    from visionaid.perception.pipeline import run_video_perception
+
+    if not ref_paths():
+        pytest.skip("Aucune photo de référence")
+    return run_video_perception(load_config())
