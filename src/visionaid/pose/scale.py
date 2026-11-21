@@ -60,12 +60,12 @@ class DepthScaleCorrector:
         if len(below) < self.min_points:
             return None
         # le sol est la surface la plus basse : le mode le plus bas parmi les modes denses
-        edges = np.arange(below.min(), below.max() + self.bin, self.bin)
+        edges = np.arange(below.min(), below.max() + 2 * self.bin, self.bin)  # ≥ 2 bords
         if len(edges) < 2:
             return None
         hist, edges = np.histogram(below, edges)
-        hs = np.convolve(hist, np.ones(3), "same")
-        dense = np.nonzero(hs >= 0.3 * hs.max())[0]
+        hs = hist + np.r_[hist[1:], 0] + np.r_[0, hist[:-1]]  # lissage sur 3 bins
+        dense = np.nonzero((hs >= 0.3 * hs.max()) & (hist > 0))[0]  # bins lissés ET non vides
         k = int(dense.max())
         lo, hi = edges[max(k - 1, 0)], edges[min(k + 2, len(edges) - 1)]
         sel = below[(below >= lo) & (below <= hi)]

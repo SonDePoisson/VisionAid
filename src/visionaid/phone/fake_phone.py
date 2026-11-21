@@ -73,6 +73,61 @@ def still_imu(noise_gyro: float = 0.2, noise_acc: float = 0.05, seed: int = 0) -
     return fn
 
 
+def video_gyro_imu(
+    path: str, max_side: int = 640, cache_dir: str | None = None
+) -> tuple[float, ImuFn]:
+    """IMU synthétique cohérente avec une vidéo : gyroscope = rotation visuelle entre images.
+
+    Renvoie (fps de la vidéo, imu_fn). L'accéléromètre est **nul** : la verticale réelle de la
+    vidéo est inconnue, une gravité inventée fausserait le sol ; la VIO garde alors la verticale
+    par le sol (comportement sans gravité) mais profite du gyroscope. Résultat mis en cache.
+    """
+    import hashlib
+    from pathlib import Path
+
+    from visionaid.calib.imu_cam import visual_rates
+    from visionaid.io.intrinsics import from_hfov
+    from visionaid.io.sources import VideoFileSource
+
+    p = Path(path)
+    key = hashlib.sha1(f"{p.resolve()}|{p.stat().st_size}|{max_side}".encode()).hexdigest()[:10]
+    cdir = Path(cache_dir) if cache_dir else p.parent
+    cpath = cdir / f".fake_imu_{p.stem}_{key}.npz"
+    if cpath.exists():
+        z = np.load(cpath)
+        t_mid, w, fps = z["t"], z["w"], float(z["fps"])
+    else:
+        src = VideoFileSource(path, width=None, apply_rotation=True)
+        fps = src.fps
+        imgs, ts = [], []
+        for f in src:
+            img = f.image
+            s = max_side / max(img.shape[:2])
+            if s < 1:
+                img = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+            imgs.append(img)
+            ts.append(f.t)
+        h, wd = imgs[0].shape[:2]
+        K = from_hfov(wd, h, 69.0).K
+        t0, t1, w = visual_rates(imgs, np.array(ts) - ts[0], K)
+        t_mid = 0.5 * (t0 + t1)
+        cdir.mkdir(parents=True, exist_ok=True)
+        np.savez(cpath, t=t_mid, w=w, fps=fps)
+    R_imu_cam = np.diag([1.0, -1.0, -1.0])  # transposée de R_cam_imu a priori (identique)
+    duration = float(t_mid[-1]) if len(t_mid) else 1.0
+
+    def fn(t: float) -> tuple[np.ndarray, np.ndarray]:
+        tv = t % max(duration, 1e-6)  # la vidéo reboucle
+        wc = (
+            np.array([np.interp(tv, t_mid, w[:, k]) for k in range(3)])
+            if len(t_mid)
+            else np.zeros(3)
+        )
+        return np.degrees(R_imu_cam @ wc), np.zeros(3)
+
+    return fps, fn
+
+
 @dataclass
 class FakePhoneStats:
     """Compteurs côté faux téléphone."""

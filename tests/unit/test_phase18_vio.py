@@ -249,3 +249,11 @@ def test_depth_scale_converges_to_camera_height():
     np.testing.assert_allclose(out.depth, d, rtol=0.06)
     # sans gravité : facteur inchangé
     assert DepthScaleCorrector(1.3).update(d, Kf, None) == 1.0
+
+
+def test_depth_scale_perfectly_flat_floor():
+    """Cas limite : sol sans bruit (toutes les hauteurs dans un seul intervalle d'histogramme)."""
+    d, Kf, up = floor_depth(box=False)
+    sc = DepthScaleCorrector(camera_height_m=1.2, ema=1.0)
+    sc.update(d, Kf, up)
+    assert sc.n_updates == 1 and sc.scale == pytest.approx(1.2 / 1.3, rel=0.01)

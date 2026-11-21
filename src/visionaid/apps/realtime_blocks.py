@@ -172,6 +172,9 @@ class WorldBlock:
 
         self.cfg = _cfg(raw)
         self.wm = WorldModel(self.cfg)
+        # images du téléphone : intrinsèques de l'appareil (calibration de la phase 17)
+        self.use_phone_intrinsics = bool(raw.get("_session") or raw.get("_phone"))
+        self._K: dict = {}
         self.dets: OrderedDict = OrderedDict()
         self.n = 0
         self.n_with_dets = 0
@@ -189,7 +192,14 @@ class WorldBlock:
         if d is None or p is None or d.frame_idx != p.frame_idx:
             return None
         h, w = d.depth.shape
-        K = make_intrinsics(self.cfg.intrinsics, w, h).K
+        if (w, h) not in self._K:
+            if self.use_phone_intrinsics:
+                from visionaid.calib.device import phone_intrinsics
+
+                self._K[(w, h)] = phone_intrinsics(self.cfg, w, h).K
+            else:
+                self._K[(w, h)] = make_intrinsics(self.cfg.intrinsics, w, h).K
+        K = self._K[(w, h)]
         frame = Frame(
             d.t, d.frame_idx, np.zeros((1, w, 3), np.uint8), K
         )  # seuls t, K et la largeur servent
