@@ -1,0 +1,198 @@
+# Configuration VisionAId — toutes les constantes du pipeline.
+device: auto            # auto | mps | cpu
+
+paths:
+  video: data/video/appart.mp4
+  ref_dir: data/ref
+  ref_glob: "gourde_*.jpg"
+  outputs: outputs
+  cache: .cache
+
+target:
+  name: gourde
+  height_m: 0.25          # hauteur réelle de la gourde (contrôle d'échelle)
+
+video:
+  width: 640              # largeur après redimensionnement (px)
+  apply_rotation: true
+
+intrinsics:
+  hfov_deg: 69.0          # champ horizontal (dans l'orientation capteur paysage)
+  calibration_file: null  # fichier OpenCV (yaml/npz) avec K si disponible
+  estimate_from_model: false
+
+replay:
+  speed: 1.0
+
+bus:
+  base_port: 5550
+  conflate_heavy: true
+  recv_timeout_ms: 100
+  node_stop_timeout_s: 2.0
+  hwm: 1000
+
+detector:
+  backend: auto           # auto | yoloe26 | yoloe11 | yoloworld | coco
+  weights:
+    yoloe26: yoloe-26s-seg.pt
+    yoloe11: yoloe-11s-seg.pt
+    yoloworld: yolov8s-worldv2.pt
+    coco: yolo26s-seg.pt
+  text_prompts: ["water bottle", "bottle", "flask"]
+  negative_prompts: ["cup", "bottle", "chair", "bag", "box"]
+  conf: 0.10
+  iou: 0.5
+  imgsz: 640
+  use_visual_prompt: false
+
+reid:
+  backend: auto           # auto | dinov2 | clip | stub
+  model: facebook/dinov2-small
+  clip_model: openai/clip-vit-base-patch32
+  w_embed: 0.6
+  w_color: 0.4
+  crop_size: 224
+  n_augment_gallery: 12
+  threshold_file: config/reid_threshold.yaml
+  default_threshold: 0.6
+  # Couleurs HSV (OpenCV : H dans [0,180], S,V dans [0,255])
+  orange_h: [5, 25]
+  orange_s_min: 90
+  orange_v_min: 80
+  gray_s_max: 50
+  gray_v_min: 50
+  orange_frac_ref: 0.30    # fraction d'orange attendue (normalisation du score)
+  gray_frac_ref: 0.35
+  n_calib_aug: 30
+
+tracker:
+  iou_match: 0.3
+  confirm_frames: 3
+  lost_frames: 10
+  max_age_frames: 30
+  score_ema: 0.5
+
+depth:
+  backend: auto           # auto | da3metric | da3small | dav2_indoor | stub
+  models:
+    da3metric: depth-anything/DA3METRIC-LARGE
+    da3small: depth-anything/DA3-SMALL
+    dav2_indoor: depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf
+  input_width: 518
+  temporal_smoothing: false
+  smoothing_alpha: 0.5
+  scale_factor: 1.0       # facteur d'échelle global (ajusté par la gourde si besoin)
+  min_m: 0.1
+  max_m: 20.0
+
+vo:
+  method: pnp             # pnp | open3d
+  n_features: 1500
+  ratio_test: 0.75
+  min_inliers: 40
+  reproj_err_px: 2.0
+  ransac_iters: 200
+  kf_trans_m: 0.15
+  kf_rot_deg: 10.0
+  kf_min_inliers: 120
+  min_depth_m: 0.2
+  max_depth_m: 8.0
+  max_jump_m: 0.5
+  max_jump_deg: 30.0
+  min_texture_keypoints: 30
+
+floor:
+  bottom_fraction: 0.5
+  ransac_iters: 200
+  inlier_dist_m: 0.03
+  min_inliers: 300
+  update_alpha: 0.05
+  max_tilt_deg: 30.0
+  pixel_step: 4
+
+costmap:
+  resolution_m: 0.05
+  init_size_m: 12.0
+  obstacle_band_m: [0.05, 1.90]
+  floor_band_m: 0.05
+  l_occ: 0.85
+  l_free: -0.4
+  l_min: -4.0
+  l_max: 4.0
+  occ_threshold: 0.6       # proba > seuil => occupé
+  free_threshold: 0.35     # proba < seuil => libre
+  decay: 0.97              # oubli multiplicatif des log-odds par mise à jour
+  robot_radius_m: 0.35
+  cost_decay_m: 0.5        # portée du coût décroissant autour des obstacles
+  cost_scale: 2.0
+  max_range_m: 5.0
+  pixel_step: 6
+  raycast: true
+
+anchor:
+  process_noise: 0.002     # m^2 / s
+  meas_noise: 0.05         # m^2 (base, divisée par la confiance)
+  shrink_box: 0.3
+  seen_timeout_s: 0.5
+  stale_after_s: 30.0
+  min_points: 20
+
+planning:
+  algorithm: dstar        # astar | dstar
+  unknown_cost: 3.0
+  allow_unknown: true
+  lookahead_m: 1.0
+  replan_hz: 5.0
+  target_search_radius_m: 1.5
+
+guidance:
+  approach_m: 1.2
+  arrived_m: 0.5
+  obstacle_m: 0.6
+  obstacle_cone_deg: 30.0
+  hysteresis_m: 0.15
+  min_state_dwell_s: 0.3
+  voice_min_interval_s: 3.0
+  cue_hz: 20.0
+  T_cam_head: [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
+
+audio:
+  sample_rate: 44100
+  head_radius_m: 0.0875
+  speed_of_sound: 343.0
+  beacon_freq_hz: 880.0
+  beep_ms: 60
+  beep_rate_far_hz: 1.0
+  beep_rate_near_hz: 6.0
+  beep_far_m: 5.0
+  pitch_per_rad: 0.5       # variation relative de hauteur par radian d'élévation
+  alert_freq_hz: 330.0
+  gain: 0.3
+  smoothing_s: 0.05
+  realtime: false
+  use_sofa: false
+
+sim:
+  dt: 0.1
+  max_time_s: 120.0
+  fov_deg: 70.0
+  range_m: 4.0
+  sensor_noise_m: 0.02
+  reaction_s: 0.3
+  heading_noise_deg: 10.0
+  speed_mps: 0.6
+  turn_rate_dps: 90.0
+  sweep_rate_dps: 30.0
+  success_m: 0.5
+  n_seeds: 100
+  replan_every: 2
+
+viz:
+  rerun: true
+  minimap_px: 200
+  arrow_len_px: 80
+
+realtime:
+  duration_s: 30.0
+  plan_hz: 5.0
+  cue_hz: 20.0

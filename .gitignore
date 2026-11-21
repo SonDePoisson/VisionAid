@@ -9,3 +9,16 @@ wheels/
 # Virtual environments
 .venv
 .vscode
+
+# Données, sorties, caches, poids
+data/
+outputs/
+.cache/
+*.pt
+*.pth
+*.onnx
+*.mlpackage/
+*.safetensors
+.pytest_cache/
+.ruff_cache/
+assets/
