@@ -267,7 +267,12 @@ class PathSink:
 
 # ---------------------------------------------------------------------------- visualisation
 class RerunLiveBlock:
-    """Visualisation Rerun : `live` (visualiseur lancé), `file` (.rrd) ou les deux (`both`)."""
+    """Visualisation Rerun : `live` (visualiseur lancé), `file` (.rrd) ou les deux (`both`).
+
+    Disposition fixe : monde 3D en grand (sol quadrillé, carte des obstacles posée au sol, nuage
+    de points coloré par la hauteur, trajectoire, position et cap de l'utilisateur, chemin,
+    cible), et à droite l'image annotée, la carte 2D et l'état.
+    """
 
     def __init__(self, raw: dict) -> None:
         import rerun as rr
@@ -284,11 +289,102 @@ class RerunLiveBlock:
             rr.spawn(connect=True)
         else:
             rr.save(str(out))
+        self.target_label = str((raw.get("target") or {}).get("name") or "cible")
+        self._blueprint()
         rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
+        self._floor_grid()
         self.traj: list[np.ndarray] = []
         self.n = 0
         self.last_cm = None
         self.last_path = None
+        self.last_depth_idx = None
+
+    def _blueprint(self) -> None:
+        try:
+            import rerun.blueprint as rrb
+
+            bp = rrb.Blueprint(
+                rrb.Horizontal(
+                    rrb.Spatial3DView(origin="world", name="Monde 3D"),
+                    rrb.Vertical(
+                        rrb.Spatial2DView(origin="camera/image", name="Caméra"),
+                        rrb.Spatial2DView(origin="costmap", name="Carte des obstacles"),
+                        rrb.TextLogView(origin="status", name="État"),
+                        row_shares=[3, 3, 1],
+                    ),
+                    column_shares=[3, 2],
+                ),
+                collapse_panels=True,
+            )
+            self.rr.send_blueprint(bp)
+        except Exception:  # version de Rerun sans blueprint : disposition automatique
+            pass
+
+    def _floor_grid(self, half: float = 8.0, step: float = 1.0) -> None:
+        """Quadrillage du sol (1 m) et axes, statiques."""
+        rr = self.rr
+        ticks = np.arange(-half, half + 1e-9, step)
+        lines = [[[x, -half, 0.0], [x, half, 0.0]] for x in ticks]
+        lines += [[[-half, y, 0.0], [half, y, 0.0]] for y in ticks]
+        rr.log(
+            "world/sol",
+            rr.LineStrips3D(lines, colors=[[90, 90, 90]], radii=0.004),
+            static=True,
+        )
+        rr.log(
+            "world/origine",
+            rr.Arrows3D(
+                origins=[[0, 0, 0]] * 2,
+                vectors=[[0.5, 0, 0], [0, 0.5, 0]],
+                colors=[[200, 60, 60], [60, 200, 60]],
+                labels=["x (cap initial)", "y"],
+            ),
+            static=True,
+        )
+
+    def _costmap_3d(self, cm) -> None:
+        """Carte posée au sol : obstacles en rouge sombre, zones libres en gris clair."""
+        from visionaid.mapping.costmap import FREE, OCC
+
+        rr = self.rr
+        res = float(cm.resolution)
+        for name, val, color, z, step in (
+            ("obstacles", OCC, [170, 40, 40], 0.03, 1),
+            ("libre", FREE, [200, 200, 200], 0.0, 2),
+        ):
+            ii, jj = np.nonzero(cm.state[::step, ::step] == val)
+            if len(ii) == 0:
+                rr.log(f"world/carte/{name}", rr.Clear(recursive=False))
+                continue
+            x = cm.origin[0] + (jj * step + 0.5) * res
+            y = cm.origin[1] + (ii * step + 0.5) * res
+            pts = np.c_[x, y, np.full(len(x), z)]
+            if val == OCC:
+                rr.log(
+                    f"world/carte/{name}",
+                    rr.Boxes3D(
+                        centers=pts,
+                        half_sizes=[[res / 2, res / 2, 0.03]],
+                        colors=[color],
+                        fill_mode="solid",
+                    ),
+                )
+            else:
+                rr.log(
+                    f"world/carte/{name}", rr.Points3D(pts, colors=[color], radii=res * step / 2)
+                )
+
+    def _cloud(self, depth, T: np.ndarray, K: np.ndarray) -> None:
+        """Nuage de points de la dernière profondeur, coloré par la hauteur (bleu bas → orange haut)."""
+        from visionaid.mapping.geometry import backproject, transform
+
+        pc, _ = backproject(depth.depth, K, 8, None, 0.2, 5.0)
+        if not len(pc):
+            return
+        pw = transform(T, pc)
+        z = np.clip(pw[:, 2] / 2.0, 0.0, 1.0)[:, None]
+        cols = (np.array([40, 110, 230]) * (1 - z) + np.array([255, 150, 30]) * z).astype(np.uint8)
+        self.rr.log("world/nuage", self.rr.Points3D(pw, colors=cols, radii=0.012))
 
     def process(self, inputs: dict[str, Any]) -> dict[str, Any] | None:
         rr = self.rr
@@ -302,7 +398,8 @@ class RerunLiveBlock:
         d = inputs.get("detections")
         if d is not None and len(d.boxes):
             labels = [
-                (d.labels[i] if i < len(d.labels) else "") + (" CIBLE" if i == d.target_idx else "")
+                (d.labels[i] if i < len(d.labels) else "")
+                + (f" {self.target_label.upper()}" if i == d.target_idx else "")
                 for i in range(len(d.boxes))
             ]
             colors = [
@@ -314,6 +411,8 @@ class RerunLiveBlock:
                     array=d.boxes, array_format=rr.Box2DFormat.XYXY, labels=labels, colors=colors
                 ),
             )
+        else:
+            rr.log("camera/image/detections", rr.Clear(recursive=False))
         pose = inputs.get("pose_world")
         if pose is not None:
             T = pose.T_world_cam
@@ -321,13 +420,47 @@ class RerunLiveBlock:
             rr.log(
                 "world/camera/image",
                 rr.Pinhole(
-                    image_from_camera=f.K, width=w, height=h, camera_xyz=rr.ViewCoordinates.RDF
+                    image_from_camera=f.K,
+                    width=w,
+                    height=h,
+                    camera_xyz=rr.ViewCoordinates.RDF,
+                    image_plane_distance=0.25,
                 ),
             )
             self.traj.append(T[:3, 3].copy())
             if len(self.traj) > 1:
-                rr.log("world/trajectory", rr.LineStrips3D([np.array(self.traj[-2000:])]))
-            rr.log("status/pose_quality", rr.TextLog(pose.quality))
+                tr = np.array(self.traj[-3000:])
+                tr_floor = np.c_[tr[:, :2], np.full(len(tr), 0.01)]
+                rr.log(
+                    "world/trajectoire",
+                    rr.LineStrips3D([tr_floor], colors=[[60, 120, 255]], radii=0.015),
+                )
+            # utilisateur : point au sol + flèche de cap (axe optique projeté)
+            fwd = T[:3, 2].copy()
+            fwd[2] = 0.0
+            nf = np.linalg.norm(fwd)
+            fwd = fwd / nf * 0.6 if nf > 1e-6 else np.array([0.6, 0.0, 0.0])
+            p0 = np.array([T[0, 3], T[1, 3], 0.02])
+            rr.log(
+                "world/vous",
+                rr.Arrows3D(
+                    origins=[p0],
+                    vectors=[fwd],
+                    colors=[[60, 120, 255]],
+                    radii=0.025,
+                    labels=["vous"],
+                ),
+            )
+            dep = inputs.get("depth")
+            if (
+                dep is not None
+                and dep.frame_idx == pose.frame_idx
+                and dep.frame_idx != self.last_depth_idx
+                and self.n % 3 == 0
+            ):
+                self.last_depth_idx = dep.frame_idx
+                self._cloud(dep, T, f.K)
+            rr.log("status/pose", rr.TextLog(f"pose : {pose.quality}"))
         cm = inputs.get("costmap")
         if cm is not None and cm is not self.last_cm and self.n % 5 == 0:
             from visionaid.mapping.costmap import FREE, OCC
@@ -337,19 +470,35 @@ class RerunLiveBlock:
             img[cm.state == FREE] = 255
             img[cm.state == OCC] = 0
             rr.log("costmap", rr.Image(img[::-1]))
+            self._costmap_3d(cm)
         p = inputs.get("path")
         if p is not None and p is not self.last_path:
             self.last_path = p
             if p.valid and len(p.points) > 1:
-                p3 = np.c_[p.points, np.full(len(p.points), 0.02)]
-                rr.log("world/path", rr.LineStrips3D([p3], colors=[[0, 200, 0]]))
+                p3 = np.c_[p.points, np.full(len(p.points), 0.05)]
+                rr.log("world/chemin", rr.LineStrips3D([p3], colors=[[0, 220, 0]], radii=0.03))
+                rr.log(
+                    "world/visee",
+                    rr.Points3D([[*p.lookahead, 0.05]], colors=[[0, 255, 0]], radii=0.06),
+                )
             else:
-                rr.log("world/path", rr.Clear(recursive=False))
+                rr.log("world/chemin", rr.Clear(recursive=False))
+                rr.log("world/visee", rr.Clear(recursive=False))
         obj = inputs.get("object")
         if obj is not None and np.isfinite(obj.position).all():
+            pos = np.asarray(obj.position, float)
             rr.log(
-                "world/target",
-                rr.Points3D([obj.position], colors=[[255, 140, 0]], radii=0.08, labels=[obj.state]),
+                "world/cible",
+                rr.Points3D(
+                    [pos],
+                    colors=[[255, 140, 0]],
+                    radii=0.1,
+                    labels=[f"{self.target_label} ({obj.state})"],
+                ),
+            )
+            rr.log(  # tige verticale du sol à la cible : lisible même vue de dessus
+                "world/cible_tige",
+                rr.LineStrips3D([[[pos[0], pos[1], 0.0], pos]], colors=[[255, 140, 0]], radii=0.01),
             )
         return None
 

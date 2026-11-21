@@ -89,10 +89,10 @@ def graph(raw: dict, source: str = "phone", rerun: str = "off") -> list[NodeSpec
             NodeSpec(
                 "viz",
                 f"{L}:RerunLiveBlock",
-                inputs=["frame", "detections", "pose_world", "costmap", "object", "path"],
+                inputs=["frame", "detections", "pose_world", "costmap", "object", "path", "depth"],
                 trigger="frame",
                 rate_hz=10.0,
-                heavy_inputs=["frame", "costmap"],
+                heavy_inputs=["frame", "costmap", "depth"],
             )
         )
     return specs
