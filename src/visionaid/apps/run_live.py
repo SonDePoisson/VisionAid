@@ -275,8 +275,17 @@ def main(argv=None) -> dict:
     )
     ap.add_argument("--rerun", choices=["off", "live", "file", "both"], default="live")
     ap.add_argument("--height", type=float, default=None, help="hauteur caméra mesurée (m)")
+    ap.add_argument(
+        "--depth-width",
+        type=int,
+        default=None,
+        help="largeur d'entrée de la profondeur (défaut 518 ; 364 = −35 %% de latence mais "
+        "guidage nettement moins précis, voir DECISIONS.md)",
+    )
     args = ap.parse_args(argv)
     ov = {}
+    if args.depth_width:
+        ov["depth.input_width"] = args.depth_width
     if args.target:
         ov["target.query"] = args.target
     if args.height:
