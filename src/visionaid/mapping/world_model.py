@@ -21,6 +21,12 @@ class WorldModel:
         self.floor = FloorTracker(cfg.floor)
         self.grid = OccupancyGrid(cfg.costmap)
         self.anchor = ObjectAnchor(cfg.anchor)
+        # cible probable (non confirmée) : ancrage séparé, publié seulement s'il est cohérent en 3D
+        self.cand_anchor = ObjectAnchor(cfg.anchor)
+        self.cand_min_meas = int(getattr(cfg.anchor, "candidate_min_meas", 4))
+        self.cand_max_offset = float(getattr(cfg.anchor, "candidate_max_offset_m", 1.0))
+        self.n_cand_wrong = 0
+        self.t_first_candidate: float | None = None
         self.step = int(cfg.costmap.pixel_step)
         self.cam_heights: list[float] = []
         self.T_world_cam: np.ndarray | None = None
@@ -51,11 +57,21 @@ class WorldModel:
                 mask = unpack_masks(dets, frame.image.shape[1])[i]
             conf = float(dets.reid_scores[i]) if dets.reid_scores is not None else 1.0
             target = (mask, dets.boxes[i], conf)
+        cand = None
+        if dets is not None and dets.target_idx < 0 and getattr(dets, "candidate_idx", -1) >= 0:
+            i = dets.candidate_idx
+            mask = None
+            if dets.masks is not None:
+                from visionaid.perception.pipeline import unpack_masks
+
+                mask = unpack_masks(dets, frame.image.shape[1])[i]
+            # confiance réduite : la mesure pèse moins qu'une détection confirmée
+            cand = (mask, dets.boxes[i], 0.5 * float(dets.reid_scores[i]))
         if not self.floor.ready:
             if target is not None and not lost:
                 self._pending.append((t, pose.T_world_cam.copy(), depth.depth, frame.K, *target))
             self.anchor.predict(t)
-            return None, self.anchor.estimate(t, frame.frame_idx)
+            return None, self._estimate(t, frame.frame_idx)
         if self._pending:
             for tp, Tp, dp, Kp, m, b, c in self._pending:
                 self.anchor.update(tp, self.T_aligned(Tp), dp, Kp, m, b, c)
@@ -69,15 +85,41 @@ class WorldModel:
             )
             dt = 1.0 / 30.0 if self._t_prev is None else max(t - self._t_prev, 0.0)
             self.grid.update(transform(T, pc), T[:3, 3], dt)
+            carve = float(getattr(self.cfg.costmap, "carve_radius_m", 0.0) or 0.0)
+            if carve > 0:
+                self.grid.carve(T[:2, 3], carve)
             self._t_prev = t
             if target is not None:
                 m, b, c = target
                 self.anchor.update(t, T, depth.depth, frame.K, m, b, c)
+                self._check_candidate()
             else:
                 self.anchor.predict(t)
+            if cand is not None and self.anchor.x is None:
+                m, b, c = cand
+                self.cand_anchor.update(t, T, depth.depth, frame.K, m, b, c)
         else:
             self.anchor.predict(t)
-        return self.grid.to_msg(t, frame.frame_idx), self.anchor.estimate(t, frame.frame_idx)
+        return self.grid.to_msg(t, frame.frame_idx), self._estimate(t, frame.frame_idx)
+
+    def _check_candidate(self) -> None:
+        """Cible confirmée : le candidat est abandonné ; s'il en était loin, il était faux."""
+        if self.cand_anchor.x is not None and self.anchor.x is not None:
+            if np.linalg.norm(self.cand_anchor.x[:2] - self.anchor.x[:2]) > self.cand_max_offset:
+                self.n_cand_wrong += 1
+            self.cand_anchor = ObjectAnchor(self.cfg.anchor)
+
+    def _estimate(self, t: float, idx: int) -> ObjectEstimate:
+        """Cible confirmée si elle existe ; sinon cible probable cohérente (état « candidate »)."""
+        est = self.anchor.estimate(t, idx)
+        if est.state != "unknown" or self.cand_anchor.n_meas < self.cand_min_meas:
+            return est
+        c = self.cand_anchor.estimate(t, idx)
+        if c.state == "stale":
+            return est
+        if self.t_first_candidate is None:
+            self.t_first_candidate = t
+        return ObjectEstimate(c.t, c.frame_idx, c.position, c.cov, "candidate", c.confidence)
 
     # interface Block du bus
     def process(self, inputs: dict[str, Any]) -> dict[str, Any] | None:

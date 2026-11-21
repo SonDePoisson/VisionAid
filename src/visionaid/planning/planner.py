@@ -8,7 +8,7 @@ import numpy as np
 from scipy.ndimage import distance_transform_edt
 
 from visionaid.bus.messages import Costmap, ObjectEstimate, Path
-from visionaid.mapping.costmap import FREE
+from visionaid.mapping.costmap import FREE, OCC
 from visionaid.planning.astar import astar
 from visionaid.planning.dstar_lite import DStarLite
 from visionaid.planning.grid import traversal_cost
@@ -74,6 +74,21 @@ class Planner:
         self._dkey = None
         self.n_plans = 0
         self.n_fail = 0
+        # stabilité (phase 25) : engagement sur le chemin précédent, visée vers l'objet au but
+        self.commit_ratio = float(getattr(p, "commit_ratio", 0.0) or 0.0)
+        self.commit_margin = float(getattr(p, "commit_margin_m", 0.0) or 0.0)
+        self.near_goal = float(getattr(p, "near_goal_m", 0.0) or 0.0)
+        self.prev_pts: np.ndarray | None = None
+        self.prev_goal: np.ndarray | None = None
+        self.n_kept = 0
+        # approche de l'objet (phase 27) : but « à portée de main » le plus rapide à atteindre,
+        # marge réduite près de l'objet (passer entre deux chaises pour attraper la gourde)
+        self.reach = float(getattr(p, "reach_m", 0.0) or 0.0)
+        self.zone = float(getattr(p, "approach_zone_m", 0.0) or 0.0)
+        self.zone_clear = float(getattr(p, "approach_clearance_m", 0.0) or 0.0)
+        self.zone_penalty = float(getattr(p, "approach_penalty", 3.0))
+        self.goal_keep = float(getattr(p, "goal_keep_ratio", 0.15))
+        self.n_reach_goal = 0
 
     def plan(self, cm: Costmap, user_xy: np.ndarray, obj: ObjectEstimate) -> Path:
         t, idx = cm.t, cm.frame_idx
@@ -88,6 +103,9 @@ class Planner:
         if not (0 <= s_ij[0] < h and 0 <= s_ij[1] < w):
             return empty
         o_ij = (int(np.clip(o_ij[0], 0, h - 1)), int(np.clip(o_ij[1], 0, w - 1)))
+        d_obj = None
+        if self.zone > 0 and self.zone_clear > 0:
+            cc, d_obj = self._relax_near_object(cm, cc, obj, res, origin)
         goal = nearest_passable(cc, o_ij, int(self.search_r / res), cm.state == FREE, toward=s_ij)
         if goal is None:
             self.n_fail += 1
@@ -101,7 +119,15 @@ class Planner:
                 self.n_fail += 1
                 return empty
         self.n_plans += 1
-        if self.algorithm == "dstar":
+        cells = None
+        if self.reach > 0:
+            reach = self._reach_goal(cc, start, obj, res, origin, d_obj)
+            if reach is not None:
+                goal, cells = reach
+                self.n_reach_goal += 1
+        if cells is not None:
+            pass
+        elif self.algorithm == "dstar":
             key = (cc.shape, tuple(np.round(origin, 6)), goal)
             if self.dstar is None or key != self._dkey:
                 self.dstar = DStarLite(cc, goal)
@@ -122,8 +148,115 @@ class Planner:
             else np.vstack([user_xy[None, :2], pts])
         )
         goal_xy = world_of(goal, origin, res)
-        la = self._lookahead_los(cm, pts, s_ij, start, origin, res)
-        return Path(t, idx, pts, la, goal_xy, True, polyline_length(pts))
+        kept = self._keep_previous(cc, origin, res, user_xy[:2], goal_xy, polyline_length(pts))
+        if kept is not None:
+            pts = kept
+            goal_xy = kept[-1].copy()  # le but publié est la fin du chemin réellement suivi
+            self.n_kept += 1
+        self.prev_pts, self.prev_goal = pts.copy(), goal_xy.copy()
+        length = polyline_length(pts)
+        if self.near_goal > 0 and length < self.near_goal:
+            # au but : la direction d'un point à quelques centimètres n'a plus de sens, on vise
+            # l'objet lui-même (stable), comme le fait le guidage en fin d'approche
+            la = np.asarray(obj.position[:2], float).copy()
+        else:
+            la = self._lookahead_los(cm, pts, s_ij, start, origin, res)
+        return Path(t, idx, pts, la, goal_xy, True, length)
+
+    def _relax_near_object(self, cm, cc, obj, res, origin):
+        """Près de l'objet (≤ `approach_zone_m`), la marge passe de `robot_radius_m` à
+        `approach_clearance_m` (demi-largeur du corps). Ces cellules restent plus coûteuses
+        (`approach_penalty`) : on ne s'y engage que si cela raccourcit vraiment le trajet."""
+        h, w = cc.shape
+        jj, ii = np.meshgrid(np.arange(w), np.arange(h))
+        xs = origin[0] + (jj + 0.5) * res
+        ys = origin[1] + (ii + 0.5) * res
+        d_obj = np.hypot(xs - obj.position[0], ys - obj.position[1])
+        clear = distance_to_obstacles(cm.state, res)
+        relax = (
+            ~np.isfinite(cc) & (cm.state != OCC) & (clear >= self.zone_clear) & (d_obj <= self.zone)
+        )
+        if relax.any():
+            cc = cc.copy()
+            cc[relax] = self.zone_penalty + np.where(cm.state[relax] < 0, self.unknown_cost, 0.0)
+        return cc, d_obj
+
+    def _reach_goal(self, cc, start, obj, res, origin, d_obj):
+        """But « à portée de main » : parmi les cellules franchissables à moins de `reach_m` de
+        l'objet (on attrape une gourde posée sur une table depuis le bord, pas besoin d'en faire
+        le tour), celle dont le trajet depuis l'utilisateur est le moins coûteux. Hystérésis :
+        le but précédent est conservé s'il reste à moins de +15 % du meilleur.
+        Renvoie (but, chemin) ou None (repli sur le but « cellule la plus proche »)."""
+        from visionaid.planning.astar import _astar_kernel
+
+        h, w = cc.shape
+        if d_obj is None:
+            jj, ii = np.meshgrid(np.arange(w), np.arange(h))
+            d_obj = np.hypot(
+                origin[0] + (jj + 0.5) * res - obj.position[0],
+                origin[1] + (ii + 0.5) * res - obj.position[1],
+            )
+        cand = (d_obj <= self.reach) & np.isfinite(cc)
+        if not cand.any():
+            return None
+        flat = np.ascontiguousarray(cc, np.float64).ravel()
+        s = start[0] * w + start[1]
+        g, parent = _astar_kernel(flat, h, w, s, -1, False)  # coûts depuis l'utilisateur
+        g = g.reshape(h, w)
+        score = np.where(cand, g + d_obj / res, np.inf)  # à coût égal, plus près de l'objet
+        k = int(np.argmin(score))
+        if not np.isfinite(score.flat[k]):
+            return None
+        goal = (k // w, k % w)
+        if self.prev_goal is not None:
+            pg = cell_of(self.prev_goal, origin, res)
+            if 0 <= pg[0] < h and 0 <= pg[1] < w and np.isfinite(score[pg]):
+                if score[pg] <= score.flat[k] * (1.0 + self.goal_keep) + 2.0:
+                    goal = pg
+        cells = []
+        u = goal[0] * w + goal[1]
+        while u != -1:
+            cells.append((int(u // w), int(u % w)))
+            u = int(parent[u])
+        cells.reverse()
+        return goal, cells
+
+    def _keep_previous(self, cc, origin, res, user_xy, goal_xy, new_len) -> np.ndarray | None:
+        """Chemin précédent, raccourci depuis l'utilisateur, s'il reste praticable et pas
+        nettement plus long que le nouveau (évite l'alternance entre deux contournements
+        presque équivalents sur une carte bruitée). None sinon."""
+        if self.commit_ratio <= 0 or self.prev_pts is None or len(self.prev_pts) < 2:
+            return None
+        if np.linalg.norm(goal_xy - self.prev_goal) > 0.15:
+            # but déplacé (même de peu) : nouveau chemin. Sinon le chemin gardé finirait à
+            # l'ancien but pendant que le guidage compare la position au nouveau (agent bloqué
+            # en approche dans le simulateur, couloir : 94 % → 67 % de succès)
+            return None
+        prev = self.prev_pts
+        # point du chemin précédent le plus proche de l'utilisateur (projection sur les segments)
+        best, best_k, best_p = np.inf, 0, prev[0]
+        for k in range(len(prev) - 1):
+            a, b = prev[k], prev[k + 1]
+            ab = b - a
+            u = float(np.clip(np.dot(user_xy - a, ab) / max(np.dot(ab, ab), 1e-12), 0.0, 1.0))
+            p = a + u * ab
+            d = float(np.linalg.norm(user_xy - p))
+            if d < best:
+                best, best_k, best_p = d, k, p
+        if best > 0.5:
+            return None  # l'utilisateur s'est écarté du chemin précédent
+        rest = np.vstack([user_xy[None], best_p[None], prev[best_k + 1 :]])
+        rest = rest[np.r_[True, np.linalg.norm(np.diff(rest, axis=0), axis=1) > 1e-6]]
+        h, w = cc.shape
+        for a, b in zip(rest[:-1], rest[1:], strict=True):  # praticable sur la nouvelle carte
+            n = max(int(np.linalg.norm(b - a) / (0.5 * res)), 1)
+            for s_ in np.linspace(0.0, 1.0, n + 1):
+                i, j = cell_of(a + s_ * (b - a), origin, res)
+                if not (0 <= i < h and 0 <= j < w) or not np.isfinite(cc[i, j]):
+                    return None
+        if polyline_length(rest) > new_len * (1.0 + self.commit_ratio) + self.commit_margin:
+            return None
+        return rest
 
     def _lookahead_los(self, cm: Costmap, pts, user_ij, start, origin, res) -> np.ndarray:
         """Point d'anticipation le plus loin (≤ lookahead_m) en ligne de vue de l'utilisateur.

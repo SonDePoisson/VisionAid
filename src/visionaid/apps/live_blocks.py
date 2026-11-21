@@ -320,6 +320,37 @@ class PathSink:
 
 
 # ---------------------------------------------------------------------------- visualisation
+class _RerunFanout:
+    """Le module `rerun`, mais `log` / `set_time` / `send_blueprint` envoyés à plusieurs flux."""
+
+    def __init__(self, rr, streams: list) -> None:
+        self._rr = rr
+        self._streams = streams
+
+    def __getattr__(self, name: str):
+        return getattr(self._rr, name)
+
+    def log(self, *args, **kw) -> None:
+        for s in self._streams:
+            self._rr.log(*args, recording=s, **kw)
+
+    def set_time(self, *args, **kw) -> None:
+        for s in self._streams:
+            self._rr.set_time(*args, recording=s, **kw)
+
+    def send_blueprint(self, *args, **kw) -> None:
+        for s in self._streams:
+            self._rr.send_blueprint(*args, recording=s, **kw)
+
+    def disconnect(self) -> None:
+        for s in self._streams:
+            try:
+                s.flush()
+                s.disconnect()
+            except Exception:
+                pass
+
+
 class RerunLiveBlock:
     """Visualisation Rerun : `live` (visualiseur lancé), `file` (.rrd) ou les deux (`both`).
 
@@ -331,21 +362,25 @@ class RerunLiveBlock:
     def __init__(self, raw: dict) -> None:
         import rerun as rr
 
-        self.rr = rr
         mode = str(raw.get("_rerun", "file"))
-        rr.init("visionaid_live", spawn=False)
         out = resolve_path(raw["paths"]["outputs"]) / "live_session.rrd"
         out.parent.mkdir(parents=True, exist_ok=True)
-        if mode == "both" and hasattr(rr, "set_sinks"):  # visualiseur + fichier
-            rr.spawn(connect=False)
-            rr.set_sinks(rr.GrpcSink(), rr.FileSink(str(out)))
-        elif mode in ("live", "both"):
-            rr.spawn(connect=True)
-        else:
-            rr.save(str(out))
+        # un flux par destination : fenêtre (spawn) et/ou fichier. Rerun 0.23 n'a pas
+        # `set_sinks` : l'ancien mode « both » n'écrivait aucun fichier, sans le signaler
+        streams = []
+        if mode in ("live", "both"):
+            live = rr.RecordingStream("visionaid_live")
+            live.spawn()
+            streams.append(live)
+        if mode in ("file", "both"):
+            rec = rr.RecordingStream("visionaid_live")
+            rec.save(str(out))
+            streams.append(rec)
+        self.rr = _RerunFanout(rr, streams)
+        self.out = out
         self.target_label = str((raw.get("target") or {}).get("name") or "cible")
         self._blueprint()
-        rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
+        self.rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
         self._floor_grid()
         self.traj: list[np.ndarray] = []
         self.n = 0

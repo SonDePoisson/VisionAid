@@ -91,6 +91,24 @@ Autres enregistrements :
 
 ---
 
+## 3 bis. Vidéos pour une présentation (MP4 lisibles par PowerPoint)
+
+Exporter une session en trois vidéos : caméra annotée, carte vue de dessus et monde 3D.
+```bash
+uv run python -m visionaid.apps.export_videos data/sessions/20261121-182903_gourde_direct2
+```
+Les vidéos sont écrites dans `outputs/videos/<session>/` : `camera.mp4`, `carte.mp4` et `monde3d.mp4` (H.264, environ 1 min de calcul). Option `--only monde3d` pour n'en refaire qu'une.
+
+**Capture vidéo de l'écran Rerun** (outil intégré à macOS) :
+1. Ouvre l'enregistrement : `uv run rerun --port 9877 outputs/videos/<session>/live_session.rrd`, puis règle la fenêtre (taille, vues, angle 3D).
+2. `Cmd+Maj+5`, puis « Enregistrer la partie sélectionnée de l'écran ». Encadre la fenêtre Rerun et clique sur **Enregistrer**.
+3. Dans Rerun, touche ▶ en bas, sur la barre de temps.
+4. Arrête l'enregistrement avec le bouton ⏹ de la barre des menus (ou `Cmd+Ctrl+Échap`). La vidéo `.mov` arrive sur le Bureau ; PowerPoint la lit directement.
+
+La première fois, macOS demande l'autorisation « Enregistrement de l'écran » : Réglages Système → Confidentialité et sécurité.
+
+---
+
 ## 4. Calibration (une fois par téléphone)
 
 Procédure détaillée : `docs/checkpoint_enregistrements.md`.
@@ -132,7 +150,23 @@ uv run python -m visionaid.apps.run_live --fake-phone data/video/appart.mp4 --du
 
 ---
 
-## 6. Tests et vérifications
+## 6. Diagnostic du chemin (qualité du guidage sur les sessions)
+
+Mesure, pour chaque session de navigation : quand le premier chemin valide apparaît, le temps passé en recherche, le taux de chemins valides, les départs bloqués et les sauts de direction.
+```bash
+uv run python -m visionaid.apps.diag_path --all --out outputs/diag
+```
+Comparer deux diagnostics, par exemple avant et après une modification, et produire l'image de comparaison :
+```bash
+uv run python -m visionaid.apps.diag_path --compare outputs/diag_avant outputs/diag --png outputs/diag/comparaison.png
+```
+```bash
+open outputs/diag/comparaison.png
+```
+
+---
+
+## 7. Tests et vérifications
 
 ```bash
 make test-fast
@@ -149,7 +183,7 @@ Tout (tests, rejeux, direct simulé), journal dans `outputs/night_run.log`.
 
 ---
 
-## 7. Dépannage rapide
+## 8. Dépannage rapide
 
 | Problème | Solution |
 |---|---|

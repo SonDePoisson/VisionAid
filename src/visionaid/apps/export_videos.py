@@ -1,0 +1,436 @@
+"""Export d'une session en trois vidéos MP4 (H.264, lisibles par PowerPoint et Keynote).
+
+- `camera.mp4`  : image de la caméra, détections (cible en orange), état du guidage ;
+- `carte.mp4`   : carte des obstacles vue de dessus, trajectoire, position et cap, chemin, cible ;
+- `monde3d.mp4` : scène 3D (sol quadrillé, obstacles, nuage de points, trajectoire, chemin, cible).
+
+La session est rejouée dans le pipeline offline (mêmes modules que le direct), image par image.
+
+Exemple :
+    uv run python -m visionaid.apps.export_videos data/sessions/20261121-182903_gourde_direct2
+"""
+
+from __future__ import annotations
+
+import argparse
+import shutil
+import subprocess
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+from visionaid.mapping.costmap import FREE, OCC
+from visionaid.utils.logging import get_logger
+
+log = get_logger("export")
+
+# couleurs (BGR pour OpenCV) — mêmes rôles que la vue Rerun
+C_USER = (214, 120, 42)  # bleu #2a78d6
+C_TARGET = (52, 104, 235)  # orange #eb6834
+C_PATH = (40, 170, 40)  # vert
+C_OCC = (40, 40, 170)  # rouge sombre
+C_INFL = (210, 190, 235)  # rose clair : marge de sécurité
+C_UNKNOWN = (128, 128, 128)
+STATE_FR = {
+    "SEARCHING": "RECHERCHE",
+    "NAVIGATING": "NAVIGATION",
+    "APPROACHING": "APPROCHE",
+    "ARRIVED": "ARRIVÉ",
+    "OBSTACLE_ALERT": "ALERTE OBSTACLE",
+    "TRACKING_LOST": "REPÉRAGE PERDU",
+}
+
+
+def replay(session_dir, cfg=None, cloud_every: int = 2) -> tuple[list[dict], float]:
+    """Rejoue la session ; renvoie, par image, ce qu'il faut pour les trois vidéos."""
+    from visionaid.io.session import SessionImu, SessionSource, load_session
+    from visionaid.mapping.geometry import backproject, transform
+    from visionaid.perception.depth import video_depth_estimator
+    from visionaid.perception.pipeline import run_video_perception, unpack_masks
+    from visionaid.perception.target import load_config_for_target
+    from visionaid.pipeline import OfflinePipeline
+
+    s = load_session(session_dir)
+    cfg = cfg or load_config_for_target(s.meta.get("target") or "où est ma gourde")
+    if s.camera_height_m:
+        cfg.body.camera_height_m = s.camera_height_m
+    dets, _ = run_video_perception(cfg, s.dir)
+    by = {d.frame_idx: d for d in dets}
+    pipe = OfflinePipeline(cfg, None, video_depth_estimator(cfg, s.dir), imu_source=SessionImu(s))
+    src = SessionSource.from_config(cfg, s.dir)
+    out, t0, last_cloud = [], None, None
+    for k, f in enumerate(src):
+        r = pipe.step(f, by.get(f.frame_idx))
+        t0 = f.t if t0 is None else t0
+        d = r["dets"]
+        pw = r["pose_world"]
+        cm = r["costmap"]
+        if pw is not None and r["depth"] is not None and k % cloud_every == 0:
+            pc, uv = backproject(r["depth"].depth, f.K, 8, None, 0.2, 5.0)
+            if len(pc):
+                last_cloud = transform(pw.T_world_cam, pc).astype(np.float32)
+        masks = unpack_masks(d, f.image.shape[1]) if d is not None and d.masks is not None else None
+        obj = r["object"]
+        p = r["path"]
+        out.append(
+            {
+                "t": float(f.t - t0),
+                "image": f.image,
+                "boxes": None if d is None else d.boxes.copy(),
+                "scores": None if d is None or d.reid_scores is None else d.reid_scores.copy(),
+                "target_idx": -1 if d is None else d.target_idx,
+                "cand_idx": -1 if d is None else getattr(d, "candidate_idx", -1),
+                "target_mask": masks[d.target_idx]
+                if masks is not None and d is not None and d.target_idx >= 0
+                else None,
+                "T": None if pw is None else pw.T_world_cam.copy(),
+                "cm": None
+                if cm is None
+                else (cm.state.copy(), ~np.isfinite(cm.cost), cm.origin.copy(), cm.resolution),
+                "obj": obj.position.copy() if np.isfinite(obj.position).all() else None,
+                "obj_state": obj.state,
+                "path": p.points.copy() if p is not None and p.valid else None,
+                "la": p.lookahead.copy() if p is not None and p.valid else None,
+                "state": r["cue"].state,
+                "dist": float(r["cue"].distance),
+                "cloud": last_cloud,
+            }
+        )
+    return out, float(src.fps)
+
+
+# ---------------------------------------------------------------------------- caméra
+def render_camera(fr: dict, height: int = 720) -> np.ndarray:
+    img = fr["image"].copy()
+    if fr["target_mask"] is not None:
+        over = img.copy()
+        over[fr["target_mask"]] = C_TARGET
+        img = cv2.addWeighted(over, 0.35, img, 0.65, 0)
+    if fr["boxes"] is not None:
+        for i, b in enumerate(fr["boxes"]):
+            x0, y0, x1, y1 = (int(v) for v in b)
+            if i == fr["target_idx"]:
+                col, lab, th = C_TARGET, "GOURDE", 3
+            elif i == fr["cand_idx"]:
+                col, lab, th = C_TARGET, "gourde probable", 2
+            else:
+                col, lab, th = (200, 200, 200), "", 1
+            cv2.rectangle(img, (x0, y0), (x1, y1), col, th)
+            if lab:
+                sc = fr["scores"][i] if fr["scores"] is not None else 0
+                cv2.putText(
+                    img, f"{lab} {sc:.2f}", (x0, max(14, y0 - 6)), 0, 0.5, col, 2, cv2.LINE_AA
+                )
+    s = img.shape[0] / height
+    img = cv2.resize(img, (int(round(img.shape[1] / s)) // 2 * 2, height))
+    _banner(img, fr)
+    return img
+
+
+def _ascii(t: str) -> str:
+    """OpenCV n'affiche pas les accents : É → E, etc."""
+    import unicodedata
+
+    return unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode()
+
+
+def _banner(img: np.ndarray, fr: dict) -> None:
+    txt = _ascii(STATE_FR.get(fr["state"], fr["state"]))
+    if np.isfinite(fr["dist"]):
+        txt += f"   {fr['dist']:.1f} m"
+    cv2.rectangle(img, (0, 0), (img.shape[1], 40), (30, 30, 30), -1)
+    cv2.putText(img, txt, (12, 28), 0, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(
+        img, f"{fr['t']:.1f} s", (img.shape[1] - 90, 28), 0, 0.7, (200, 200, 200), 2, cv2.LINE_AA
+    )
+
+
+# ---------------------------------------------------------------------------- carte 2D
+def map_extent(frames: list[dict], margin: float = 0.6) -> tuple[float, float, float, float]:
+    """Emprise (x0, x1, y0, y1) des zones connues et parcourues, sur toute la session."""
+    xs, ys = [], []
+    for fr in frames:
+        if fr["T"] is not None:
+            xs.append(fr["T"][0, 3])
+            ys.append(fr["T"][1, 3])
+        if fr["obj"] is not None:
+            xs.append(fr["obj"][0])
+            ys.append(fr["obj"][1])
+    last = next((fr["cm"] for fr in reversed(frames) if fr["cm"] is not None), None)
+    if last is not None:
+        st, _, origin, res = last
+        ii, jj = np.nonzero(st != -1)
+        if len(ii):
+            xs += [origin[0] + jj.min() * res, origin[0] + (jj.max() + 1) * res]
+            ys += [origin[1] + ii.min() * res, origin[1] + (ii.max() + 1) * res]
+    if not xs:
+        return -3, 3, -3, 3
+    x0, x1, y0, y1 = min(xs) - margin, max(xs) + margin, min(ys) - margin, max(ys) + margin
+    side = max(x1 - x0, y1 - y0)  # carré : même échelle en x et y
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    return cx - side / 2, cx + side / 2, cy - side / 2, cy + side / 2
+
+
+def activity_extent(frames: list[dict], margin: float = 2.0) -> tuple[float, float, float, float]:
+    """Emprise resserrée pour la 3D : trajectoire et cible (+ marge), pas toute la carte."""
+    xs = [fr["T"][0, 3] for fr in frames if fr["T"] is not None]
+    ys = [fr["T"][1, 3] for fr in frames if fr["T"] is not None]
+    for fr in frames:
+        if fr["obj"] is not None:
+            xs.append(fr["obj"][0])
+            ys.append(fr["obj"][1])
+    if not xs:
+        return map_extent(frames)
+    return min(xs) - margin, max(xs) + margin, min(ys) - margin, max(ys) + margin
+
+
+def render_map(fr: dict, traj: np.ndarray, ext, size: int = 720) -> np.ndarray:
+    x0, x1, y0, y1 = ext
+    sc = size / (x1 - x0)
+    img = np.full((size, size, 3), C_UNKNOWN, np.uint8)
+
+    def px(x, y):
+        return int(round((x - x0) * sc)), int(round((y1 - y) * sc))
+
+    if fr["cm"] is not None:
+        st, blocked, origin, res = fr["cm"]
+        h, w = st.shape
+        # rééchantillonnage de la grille dans l'emprise fixe
+        gx = x0 + (np.arange(size) + 0.5) / sc
+        gy = y1 - (np.arange(size) + 0.5) / sc
+        jj = np.floor((gx - origin[0]) / res).astype(int)
+        ii = np.floor((gy - origin[1]) / res).astype(int)
+        okj = (jj >= 0) & (jj < w)
+        oki = (ii >= 0) & (ii < h)
+        sub = np.full((size, size), -1, np.int8)
+        bl = np.zeros((size, size), bool)
+        sub[np.ix_(oki, okj)] = st[np.ix_(ii[oki], jj[okj])]
+        bl[np.ix_(oki, okj)] = blocked[np.ix_(ii[oki], jj[okj])]
+        img[sub == FREE] = (255, 255, 255)
+        img[bl & (sub != OCC)] = C_INFL
+        img[sub == OCC] = C_OCC
+    # quadrillage 1 m
+    for gx in np.arange(np.ceil(x0), x1, 1.0):
+        cv2.line(img, px(gx, y0), px(gx, y1), (170, 170, 170), 1)
+    for gy in np.arange(np.ceil(y0), y1, 1.0):
+        cv2.line(img, px(x0, gy), px(x1, gy), (170, 170, 170), 1)
+    if len(traj) > 1:
+        cv2.polylines(
+            img, [np.array([px(*p) for p in traj], np.int32)], False, C_USER, 2, cv2.LINE_AA
+        )
+    if fr["path"] is not None and len(fr["path"]) > 1:
+        cv2.polylines(
+            img, [np.array([px(*p) for p in fr["path"]], np.int32)], False, C_PATH, 4, cv2.LINE_AA
+        )
+        if fr["la"] is not None and np.isfinite(fr["la"]).all():
+            cv2.circle(img, px(*fr["la"]), 7, C_PATH, -1, cv2.LINE_AA)
+    if fr["obj"] is not None:
+        c = px(fr["obj"][0], fr["obj"][1])
+        cv2.circle(img, c, 11, C_TARGET, -1, cv2.LINE_AA)
+        cv2.circle(img, c, 11, (255, 255, 255), 2, cv2.LINE_AA)
+    if fr["T"] is not None:
+        T = fr["T"]
+        p = px(T[0, 3], T[1, 3])
+        fwd = T[:2, 2] / max(np.linalg.norm(T[:2, 2]), 1e-6)
+        tip = px(T[0, 3] + 0.5 * fwd[0], T[1, 3] + 0.5 * fwd[1])
+        cv2.arrowedLine(img, p, tip, C_USER, 4, cv2.LINE_AA, tipLength=0.35)
+        cv2.circle(img, p, 9, C_USER, -1, cv2.LINE_AA)
+    _banner(img, fr)
+    # légende
+    y = size - 16
+    for col, lab in (
+        (C_USER, "vous"),
+        (C_PATH, "chemin"),
+        (C_TARGET, "gourde"),
+        (C_OCC, "obstacle"),
+        (C_INFL, "marge"),
+    ):
+        cv2.rectangle(img, (12, y - 12), (28, y + 2), col, -1)
+        cv2.putText(img, lab, (34, y), 0, 0.5, (20, 20, 20), 1, cv2.LINE_AA)
+        y -= 22
+    cv2.putText(img, "quadrillage : 1 m", (size - 170, size - 14), 0, 0.5, (40, 40, 40), 1)
+    return img
+
+
+# ---------------------------------------------------------------------------- monde 3D
+class World3DRenderer:
+    """Rendu matplotlib (hors écran) d'une vue 3D fixe, image par image."""
+
+    def __init__(self, ext, size=(1280, 720), elev: float = 38.0, azim: float = -125.0) -> None:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        self.plt = plt
+        self.ext = ext
+        self.size = size
+        self.elev, self.azim = elev, azim
+        self.fig = plt.figure(figsize=(size[0] / 100, size[1] / 100), dpi=100, facecolor="#fcfcfb")
+        self.ax = self.fig.add_axes([-0.05, -0.08, 1.1, 1.08], projection="3d")
+
+    def render(self, fr: dict, traj: np.ndarray) -> np.ndarray:
+        ax = self.ax
+        ax.cla()
+        x0, x1, y0, y1 = self.ext
+        ax.set_xlim(x0, x1)
+        ax.set_ylim(y0, y1)
+        ax.set_zlim(0, 2.0)
+        ax.set_box_aspect((x1 - x0, y1 - y0, 2.0), zoom=1.3)
+        ax.view_init(elev=self.elev, azim=self.azim)
+        ax.set_axis_off()
+        for gx in np.arange(np.ceil(x0), x1, 1.0):
+            ax.plot([gx, gx], [y0, y1], [0, 0], color="#d8d7d2", lw=0.6)
+        for gy in np.arange(np.ceil(y0), y1, 1.0):
+            ax.plot([x0, x1], [gy, gy], [0, 0], color="#d8d7d2", lw=0.6)
+        if fr["cm"] is not None:
+            st, _, origin, res = fr["cm"]
+            ii, jj = np.nonzero(st == OCC)
+            if len(ii):
+                xs = origin[0] + (jj + 0.5) * res
+                ys = origin[1] + (ii + 0.5) * res
+                m = (xs > x0) & (xs < x1) & (ys > y0) & (ys < y1)
+                ax.scatter(
+                    xs[m],
+                    ys[m],
+                    np.full(m.sum(), 0.04),
+                    s=4,
+                    c="#aa2828",
+                    marker="s",
+                    depthshade=False,
+                )
+        if fr["cloud"] is not None:
+            pc = fr["cloud"]
+            m = (
+                (pc[:, 0] > x0)
+                & (pc[:, 0] < x1)
+                & (pc[:, 1] > y0)
+                & (pc[:, 1] < y1)
+                & (pc[:, 2] < 2.0)
+            )
+            pc = pc[m]
+            z = np.clip(pc[:, 2] / 2.0, 0, 1)[:, None]
+            cols = np.array([42, 120, 214]) / 255 * (1 - z) + np.array([235, 104, 52]) / 255 * z
+            ax.scatter(pc[:, 0], pc[:, 1], pc[:, 2], s=1.2, c=cols, depthshade=False, alpha=0.8)
+        if len(traj) > 1:
+            ax.plot(traj[:, 0], traj[:, 1], np.full(len(traj), 0.01), color="#2a78d6", lw=2.5)
+        if fr["path"] is not None and len(fr["path"]) > 1:
+            P = fr["path"]
+            ax.plot(P[:, 0], P[:, 1], np.full(len(P), 0.05), color="#28aa28", lw=4)
+        if fr["obj"] is not None:
+            o = fr["obj"]
+            ax.plot([o[0], o[0]], [o[1], o[1]], [0, o[2]], color="#eb6834", lw=2)
+            ax.scatter(
+                [o[0]], [o[1]], [o[2]], s=160, c="#eb6834", edgecolors="white", depthshade=False
+            )
+        if fr["T"] is not None:
+            T = fr["T"]
+            fwd = T[:2, 2] / max(np.linalg.norm(T[:2, 2]), 1e-6)
+            ax.quiver(T[0, 3], T[1, 3], 0.02, fwd[0], fwd[1], 0, length=0.6, color="#2a78d6", lw=3)
+            ax.plot(
+                [T[0, 3], T[0, 3]],
+                [T[1, 3], T[1, 3]],
+                [0, T[2, 3]],
+                color="#2a78d6",
+                lw=1.5,
+                ls=":",
+            )
+            ax.scatter([T[0, 3]], [T[1, 3]], [T[2, 3]], s=60, c="#2a78d6", depthshade=False)
+        txt = STATE_FR.get(fr["state"], fr["state"])
+        if np.isfinite(fr["dist"]):
+            txt += f"   {fr['dist']:.1f} m"
+        self.fig.suptitle(f"{txt}      {fr['t']:.1f} s", x=0.02, ha="left", fontsize=15)
+        self.fig.canvas.draw()
+        buf = np.asarray(self.fig.canvas.buffer_rgba())[:, :, :3]
+        return cv2.cvtColor(buf, cv2.COLOR_RGB2BGR)
+
+
+# ---------------------------------------------------------------------------- vidéo
+class Mp4Writer:
+    """Écrit des images en MP4 H.264 (yuv420p) via ffmpeg, repli OpenCV sinon."""
+
+    def __init__(self, path: Path, fps: float) -> None:
+        self.path = Path(path)
+        self.fps = fps
+        self.proc = None
+        self.cv = None
+
+    def write(self, img: np.ndarray) -> None:
+        h, w = img.shape[:2]
+        if w % 2 or h % 2:
+            img = img[: h - h % 2, : w - w % 2]
+            h, w = img.shape[:2]
+        if self.proc is None and self.cv is None:
+            if shutil.which("ffmpeg"):
+                self.proc = subprocess.Popen(
+                    [
+                        "ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24",
+                        "-s", f"{w}x{h}", "-r", f"{self.fps:.3f}", "-i", "-",
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20",
+                        "-movflags", "+faststart", str(self.path),
+                    ],
+                    stdin=subprocess.PIPE,
+                )  # fmt: skip
+            else:
+                self.cv = cv2.VideoWriter(
+                    str(self.path), cv2.VideoWriter_fourcc(*"mp4v"), self.fps, (w, h)
+                )
+        if self.proc is not None:
+            self.proc.stdin.write(np.ascontiguousarray(img).tobytes())
+        else:
+            self.cv.write(img)
+
+    def close(self) -> None:
+        if self.proc is not None:
+            self.proc.stdin.close()
+            self.proc.wait(timeout=300)
+        if self.cv is not None:
+            self.cv.release()
+
+
+def export(session_dir, out_dir, which=("camera", "carte", "monde3d")) -> dict[str, Path]:
+    frames, fps = replay(session_dir)
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    ext = map_extent(frames)
+    writers = {w: Mp4Writer(out / f"{w}.mp4", fps) for w in which}
+    r3d = World3DRenderer(activity_extent(frames)) if "monde3d" in which else None
+    traj: list[np.ndarray] = []
+    for k, fr in enumerate(frames):
+        if fr["T"] is not None:
+            traj.append(fr["T"][:2, 3].copy())
+        tr = np.array(traj) if traj else np.zeros((0, 2))
+        if "camera" in writers:
+            writers["camera"].write(render_camera(fr))
+        if "carte" in writers:
+            writers["carte"].write(render_map(fr, tr, ext))
+        if r3d is not None:
+            writers["monde3d"].write(r3d.render(fr, tr))
+        if k % 50 == 0:
+            log.info("Export : image %d / %d", k, len(frames))
+    for w in writers.values():
+        w.close()
+    return {w: out / f"{w}.mp4" for w in which}
+
+
+def main(argv=None) -> dict:
+    from visionaid.utils.config import resolve_path
+
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    ap.add_argument("session")
+    ap.add_argument(
+        "--out", default=None, help="dossier de sortie (défaut : outputs/videos/<session>)"
+    )
+    ap.add_argument("--only", nargs="+", choices=["camera", "carte", "monde3d"], default=None)
+    args = ap.parse_args(argv)
+    name = Path(args.session).name
+    out = resolve_path(args.out or f"outputs/videos/{name}")
+    res = export(args.session, out, tuple(args.only or ("camera", "carte", "monde3d")))
+    for k, v in res.items():
+        print(f"{k:8s} {v}")
+    return res
+
+
+if __name__ == "__main__":
+    main()

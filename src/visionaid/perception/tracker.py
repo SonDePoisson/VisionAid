@@ -46,6 +46,7 @@ class Track:
     below: int = 0  # frames consécutives sous le seuil bas (une fois confirmée)
     confirmed: bool = False
     label: str = ""
+    cand_hits: int = 0  # images consécutives au-dessus du seuil « probable »
 
     def predict(self) -> np.ndarray:
         return self.box + self.vel
@@ -64,6 +65,9 @@ class TargetTracker:
         self.threshold = float(threshold)
         self.low_threshold = 0.85 * self.threshold
         self.reject_threshold = 0.6 * self.threshold
+        self.cand_threshold = float(getattr(t, "candidate_ratio", 1.0)) * self.threshold
+        self.cand_frames = int(getattr(t, "candidate_frames", 10**6))
+        self.candidate_id = -1
         self.tracks: list[Track] = []
         self._next_id = 1
         self.target_id = -1
@@ -137,11 +141,31 @@ class TargetTracker:
         dets.reid_scores = scores
         dets.target_idx = target_idx
         dets.target_track_id = self.target_id
+        # cible probable : tant qu'aucune cible n'est confirmée, meilleure piste stable au-dessus
+        # du seuil « probable » (gourde lointaine : score juste sous le seuil de confirmation)
+        dets.candidate_idx = -1
+        self.candidate_id = -1
+        if target_idx < 0 and self.target_id < 0:
+            cands = [
+                t
+                for t in self.tracks
+                if not t.confirmed
+                and t.misses == 0
+                and t.cand_hits >= self.cand_frames
+                and t.score_ema >= self.cand_threshold
+            ]
+            if cands:
+                best = max(cands, key=lambda t: t.score_ema)
+                hits = np.where(track_ids == best.id)[0]
+                if len(hits):
+                    self.candidate_id = best.id
+                    dets.candidate_idx = int(hits[0])
         return dets
 
     def _update_score(self, tr: Track, s: float, init: bool = False) -> None:
         if not init:
             tr.score_ema = self.alpha * s + (1 - self.alpha) * tr.score_ema
+        tr.cand_hits = tr.cand_hits + 1 if s >= self.cand_threshold else 0
         if s >= self.threshold:
             tr.above += 1
             tr.below = 0

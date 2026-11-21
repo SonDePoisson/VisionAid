@@ -245,6 +245,9 @@ def run_episode(
         T = head_pose(agent.x, agent.y, agent.heading)
         pts = sensor.scan(world, agent.x, agent.y, agent.heading)
         grid.update(pts, np.array([agent.x, agent.y, HEAD_HEIGHT]), dt)
+        carve = float(getattr(cfg.costmap, "carve_radius_m", 0.0) or 0.0)
+        if carve > 0:  # même règle que le pipeline réel : là où l'utilisateur marche, c'est libre
+            grid.carve(np.array([agent.x, agent.y]), carve)
         if world.visible(
             np.array([agent.x, agent.y]),
             world.obj,

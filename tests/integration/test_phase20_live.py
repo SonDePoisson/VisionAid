@@ -84,3 +84,26 @@ def test_live_records_session(tmp_path):
     s = load_session(dirs[0])
     assert len(s.frames) > 20 and len(s.imu_t) > 100
     assert s.meta["target"] == "où est ma gourde"
+
+
+@pytest.mark.timeout(120)
+def test_rerun_file_mode_writes_recording(tmp_path):
+    """`--rerun file` (et `both`) écrit bien `live_session.rrd` (régression : Rerun 0.23 sans
+    `set_sinks`, l'ancien mode `both` n'écrivait aucun fichier)."""
+    from visionaid.apps.live_blocks import RerunLiveBlock
+
+    raw = load_raw(overrides={"paths.outputs": str(tmp_path)})
+    raw["_rerun"] = "file"
+    blk = RerunLiveBlock(raw)
+    import numpy as np
+
+    from visionaid.bus.messages import Frame, Pose
+
+    for k in range(5):
+        img = np.full((48, 64, 3), 100 + k, np.uint8)
+        blk.process(
+            {"frame": Frame(k * 0.1, k, img, np.eye(3)), "pose_world": Pose(k * 0.1, k, np.eye(4))}
+        )
+    blk.close()
+    out = tmp_path / "live_session.rrd"
+    assert out.exists() and out.stat().st_size > 1000

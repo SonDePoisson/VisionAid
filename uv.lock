@@ -2200,6 +2200,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "cryptography" },
+    { name = "matplotlib" },
     { name = "msgpack" },
     { name = "msgpack-numpy" },
     { name = "numba" },
@@ -2234,6 +2235,7 @@ dev = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.14.5" },
     { name = "cryptography", specifier = ">=50.0.2" },
+    { name = "matplotlib", specifier = ">=3.11.2" },
     { name = "msgpack", specifier = ">=1.0" },
     { name = "msgpack-numpy", specifier = ">=0.4.8" },
     { name = "numba", specifier = ">=0.61" },

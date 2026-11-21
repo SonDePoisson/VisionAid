@@ -72,6 +72,8 @@ reid:
 tracker:
   iou_match: 0.3
   confirm_frames: 3
+  candidate_ratio: 0.85     # cible probable : score moyen ≥ 0,85 × seuil ReID…
+  candidate_frames: 5       # …sur au moins 5 images consécutives (avant confirmation)
   lost_frames: 10
   max_age_frames: 30
   score_ema: 0.5
@@ -132,10 +134,15 @@ costmap:
   cost_decay_m: 0.5        # portée du coût décroissant autour des obstacles
   cost_scale: 2.0
   max_range_m: 5.0
+  occ_range_m: 3.0         # obstacles marqués seulement jusqu'à 3 m (profondeur fiable)
+  carve_radius_m: 0.20     # rayon libéré sous l'utilisateur (là où il marche, c'est libre)
+  walked_free_bias: 0.4    # biais « libre » par mise à jour sur les cellules parcourues (< l_occ)
   pixel_step: 6
   raycast: true
 
 anchor:
+  candidate_min_meas: 4    # mesures 3D cohérentes avant de publier une cible probable
+  candidate_max_offset_m: 1.0  # cible confirmée plus loin du candidat : le candidat était faux
   process_noise: 0.002     # m^2 / s
   meas_noise: 0.05         # m^2 (base, divisée par la confiance)
   shrink_box: 0.3
@@ -150,6 +157,14 @@ planning:
   lookahead_m: 1.0
   replan_hz: 5.0
   target_search_radius_m: 1.5
+  commit_ratio: 0.2        # garde le chemin précédent s'il fait au plus +20 % …
+  commit_margin_m: 0.3     # … + 30 cm de plus que le nouveau, et reste praticable
+  near_goal_m: 0.35        # chemin restant plus court : la visée pointe vers l'objet
+  reach_m: 0.70            # but « à portée de main » : on attrape l'objet depuis le bord d'une table
+  approach_zone_m: 2.0     # près de l'objet (≤ 2 m : tout un passage, marge comprise) …
+  approach_clearance_m: 0.20  # … la marge passe de 0,35 m à 0,20 m (demi-largeur du corps)
+  approach_penalty: 3.0    # coût des cellules ainsi relâchées (on ne s'y engage que si utile)
+  goal_keep_ratio: 0.15    # hystérésis du but : garde le précédent s'il reste à +15 % du meilleur
 
 guidance:
   approach_m: 1.2

@@ -61,6 +61,7 @@ class Detections:
     reid_scores: np.ndarray | None = None  # (N,)
     target_idx: int = -1  # index de la détection confirmée comme cible, -1 sinon
     target_track_id: int = -1
+    candidate_idx: int = -1  # cible « probable » (non confirmée), -1 sinon
 
 
 @dataclass
