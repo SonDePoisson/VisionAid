@@ -22,3 +22,8 @@ data/
 .ruff_cache/
 
 .certs/
+
+# Sorties régénérées à chaque lancement : peuvent contenir des images de l'utilisateur
+# (sessions iPhone, vidéo de l'appartement) ; jamais dans le dépôt public
+outputs/
+*.rrd
