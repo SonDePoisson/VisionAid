@@ -9,3 +9,4 @@
 | 4 — Profondeur métrique | ✅ | 6 unit + 3 slow/data | ~20 min | DAv2-Metric-Indoor-Small (DA3 indisponible) ; 7,4 img/s ; hauteur gourde 0,33 m vs 0,25 m |
 | 5 — Pose (odométrie RGB-D) | ✅ | 7 unit + 3 slow/data | ~45 min | 0 % perdu, 35 keyframes, aller-retour 0,6 % ; critère « par paire » sur keyframes (voir DECISIONS) ; hauteur caméra testée en phase 6 |
 | 6 — Fusion 3D | ✅ | 11 unit + 3 slow/data | ~50 min | facteur d'échelle 0,76 ; caméra 1,39 m (σ 8 cm) ; gourde σ 7,5 cm à 0,87 m du sol ; costmap 27 % libre / 73 % occupé (pièce meublée) |
+| 7 — Planification | ✅ | 9 unit | ~30 min | A*/D* Lite en numba (2,9 ms / 1,9 ms incrémental sur 200×200) |
