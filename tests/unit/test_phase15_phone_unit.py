@@ -210,3 +210,15 @@ def test_inbox_slow_consumer_gets_fresh_frames():
     # l'image consommée a au plus une période de retard : rien ne s'accumule
     assert max(ages) < 2 * period
     assert box.n_overwritten > 10
+
+
+def test_cert_reload_on_network_change(tmp_path):
+    """Changement d'IP : certificat réémis et rechargeable dans le contexte TLS existant."""
+    from visionaid.phone.certs import server_ssl_context
+
+    paths = ensure_certs(tmp_path, ["localhost"], ["127.0.0.1", "172.20.10.5"])
+    ctx = server_ssl_context(paths)
+    assert not server_cert_covers(paths, ["localhost"], ["127.0.0.1", "10.5.60.177"])
+    paths = ensure_certs(tmp_path, ["localhost"], ["127.0.0.1", "10.5.60.177"])
+    ctx.load_cert_chain(str(paths.server_cert), str(paths.server_key))
+    assert server_cert_covers(paths, ["localhost"], ["127.0.0.1", "10.5.60.177"])

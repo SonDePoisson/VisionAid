@@ -190,6 +190,10 @@ def run(
         raw["_t0_wall"] = time.time() + warmup_s
     else:
         raw["_live_clock"] = True
+        if fake and "_phone_https_port" not in raw:  # ne jamais tomber sur un vrai serveur lancé
+            with socket.socket() as so:
+                so.bind(("127.0.0.1", 0))
+                raw["_phone_https_port"] = so.getsockname()[1]
         raw.setdefault("_phone_https_port", int(raw["phone"]["https_port"]))
         raw.setdefault("_phone_http_port", int(raw["phone"]["http_port"]) if not fake else 0)
     specs = graph(raw, source, rerun)
@@ -302,6 +306,8 @@ def main(argv=None) -> dict:
     )
     update_report("live", s)
     print(json.dumps(s["path"], indent=2, ensure_ascii=False, default=str))
+    if s["nodes_alive_at_end"] < s["n_nodes"]:
+        raise SystemExit("un nœud du graphe s'est arrêté (voir le journal)")
     return s
 
 

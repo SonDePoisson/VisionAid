@@ -181,7 +181,9 @@ class PhoneServer:
         self._runner = web.AppRunner(app, access_log=None)
         await self._runner.setup()
         ssl_ctx = server_ssl_context(self.certs)
+        self._ssl_ctx = ssl_ctx
         await web.TCPSite(self._runner, self.host, self.https_port, ssl_context=ssl_ctx).start()
+        self._cert_task = asyncio.create_task(self._cert_watch())
         if self.http_port > 0:  # HTTP simple : uniquement pour télécharger ca.crt
             plain = web.Application()
             plain.router.add_get("/", self._ca_page)
@@ -192,7 +194,31 @@ class PhoneServer:
         else:
             self._plain_runner = None
 
+    async def _cert_watch(self, period_s: float = 3.0) -> None:
+        """Changement de réseau (Wi-Fi ↔ partage de connexion) : réémet le certificat pour la
+        nouvelle adresse IP et le recharge à chaud (les nouvelles connexions l'utilisent)."""
+        from visionaid.phone.certs import host_names, local_ips, server_cert_covers
+
+        while True:
+            await asyncio.sleep(period_s)
+            try:
+                names, ips = host_names(), local_ips()
+                if server_cert_covers(self.certs, names, ips):
+                    continue
+                self.certs = ensure_certs(resolve_path(self.cfg.phone.certs_dir), names, ips)
+                self._ssl_ctx.load_cert_chain(
+                    str(self.certs.server_cert), str(self.certs.server_key)
+                )
+                log.warning(
+                    "Adresse réseau changée : certificat réémis. Nouvelle adresse : %s",
+                    ", ".join(self.urls()),
+                )
+            except Exception as e:  # ne jamais arrêter le serveur pour ça
+                log.warning("Vérification du certificat impossible : %s", e)
+
     async def _shutdown(self) -> None:
+        if getattr(self, "_cert_task", None) is not None:
+            self._cert_task.cancel()
         if self._ws is not None and not self._ws.closed:
             await self._ws.close()
         if self._runner is not None:

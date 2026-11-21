@@ -1,37 +1,93 @@
-=== VisionAId night run Sat Nov 21 03:55:22 CET 2026 ===
+=== VisionAId night run Sat Nov 21 12:17:34 CET 2026 ===
 --- pytest -m 'not slow' ---
-........................................................................ [ 67%]
-...................................                                      [100%]
-107 passed, 23 deselected in 64.64s (0:01:04)
+...s.................................................................... [ 40%]
+........................................................................ [ 81%]
+.................................                                        [100%]
+=========================== short test summary info ============================
+SKIPPED [1] tests/data/test_phase16_sessions_data.py:19: Aucune session réelle dans data/sessions/ (voir docs/checkpoint_enregistrements.md)
+176 passed, 1 skipped, 30 deselected in 136.01s (0:02:16)
 --- pytest -m slow ---
-.......................                                                  [100%]
+sssss.......................s.                                           [100%]
 =============================== warnings summary ===============================
 tests/data/test_phase4_depth_data.py::test_median_depth_indoor
   /Users/sarahhusson/VisionAid/tests/data/test_phase4_depth_data.py:35: RuntimeWarning: All-NaN slice encountered
     "ms_per_frame": float(np.nanmedian(t) * 1e3),
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-23 passed, 107 deselected, 1 warning in 494.16s (0:08:14)
---- run_offline ---
-04:04:45 INFO    visionaid.depth: Backend profondeur da3metric indisponible : ModuleNotFoundError("No module named 'depth_anything_3'")
-04:04:45 INFO    visionaid.depth: Backend profondeur da3small indisponible : ModuleNotFoundError("No module named 'depth_anything_3'")
-W1121 04:04:48.360000 70690 .venv/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/redirects.py:35] NOTE: Redirects are currently not supported in MacOs.
-Loading weights:   0%|          | 0/287 [00:00<?, ?it/s]Loading weights: 100%|██████████| 287/287 [00:00<00:00, 11914.10it/s]
-04:04:50 INFO    visionaid.depth: Profondeur : depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf sur mps
-04:05:53 INFO    visionaid.offline: Offline terminé : 485 frames, état final ARRIVED, distance 0.22955439184319554
---- run_realtime (30 s) ---
-04:05:54 INFO    visionaid.runner: Graphe démarré : ['source', 'perception', 'geometry', 'world', 'planner', 'guidance', 'sink']
-04:05:56 INFO    visionaid.depth: Backend profondeur da3metric indisponible : ModuleNotFoundError("No module named 'depth_anything_3'")
-04:05:56 INFO    visionaid.depth: Backend profondeur da3small indisponible : ModuleNotFoundError("No module named 'depth_anything_3'")
+=========================== short test summary info ============================
+SKIPPED [1] tests/data/test_phase17_calib_data.py:15: Aucune session « calib_camera » (voir docs/checkpoint_enregistrements.md)
+SKIPPED [1] tests/data/test_phase17_calib_data.py:15: Aucune session « calib_imu » (voir docs/checkpoint_enregistrements.md)
+SKIPPED [1] tests/data/test_phase18_vio_data.py:16: Aucune session « rotations_rapides » (voir docs/checkpoint_enregistrements.md)
+SKIPPED [1] tests/data/test_phase18_vio_data.py:16: Aucune session « gourde_piece » (voir docs/checkpoint_enregistrements.md)
+SKIPPED [1] tests/data/test_phase19_keys_data.py:19: Aucune session « cles_piece » (voir docs/checkpoint_enregistrements.md)
+SKIPPED [1] tests/integration/test_phase20_live_slow.py:50: Aucune session « gourde_piece » (voir docs/checkpoint_enregistrements.md)
+24 passed, 6 skipped, 177 deselected, 1 warning in 570.77s (0:09:30)
+--- run_offline (vidéo) ---
+12:29:25 INFO    visionaid.depth: Backend profondeur da3metric indisponible : ModuleNotFoundError("No module named 'depth_anything_3'")
+12:29:25 INFO    visionaid.depth: Backend profondeur da3small indisponible : ModuleNotFoundError("No module named 'depth_anything_3'")
+W1121 12:29:27.902000 77825 .venv/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/redirects.py:35] NOTE: Redirects are currently not supported in MacOs.
+Loading weights:   0%|          | 0/287 [00:00<?, ?it/s]Loading weights: 100%|██████████| 287/287 [00:00<00:00, 11047.77it/s]
+12:29:29 INFO    visionaid.depth: Profondeur : depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf sur mps
+12:30:34 INFO    visionaid.offline: Offline terminé : 485 frames, état final ARRIVED, distance 0.18305043835521903
+--- run_realtime (vidéo, 30 s) ---
+12:30:35 INFO    visionaid.runner: Graphe démarré : ['source', 'perception', 'geometry', 'world', 'planner', 'guidance', 'sink']
+12:30:36 INFO    visionaid.depth: Backend profondeur da3metric indisponible : ModuleNotFoundError("No module named 'depth_anything_3'")
+12:30:36 INFO    visionaid.depth: Backend profondeur da3small indisponible : ModuleNotFoundError("No module named 'depth_anything_3'")
 /Users/sarahhusson/VisionAid/.venv/lib/python3.12/site-packages/torch/jit/_serialization.py:176: FutureWarning: `torch.jit.load` is deprecated. Please switch to `torch.export`.
   warnings.warn(
-W1121 04:05:58.128000 70728 .venv/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/redirects.py:35] NOTE: Redirects are currently not supported in MacOs.
-04:05:58 INFO    visionaid.detector: Détecteur : yoloe26 (yoloe-26s-seg.pt) sur mps, prompts=['water bottle', 'bottle', 'flask']
-Loading weights:   0%|          | 0/287 [00:00<?, ?it/s]Loading weights: 100%|██████████| 287/287 [00:00<00:00, 11749.78it/s]
-04:06:00 INFO    visionaid.depth: Profondeur : depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf sur mps
-W1121 04:06:01.692000 70729 .venv/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/redirects.py:35] NOTE: Redirects are currently not supported in MacOs.
-Loading weights:   0%|          | 0/223 [00:00<?, ?it/s]Loading weights: 100%|██████████| 223/223 [00:00<00:00, 13096.74it/s]
-04:06:50 INFO    visionaid.realtime: Temps réel : {'n_cues': 143, 'e2e_p50_ms': 382.39455223083496, 'e2e_p95_ms': 479.6600580215454, 'cue_hz': 19.904642020176766, 'fresh_cue_hz': 4.840754777015778, 'states': {'SEARCHING': 19, 'NAVIGATING': 17, 'OBSTACLE_ALERT': 55, 'APPROACHING': 33, 'ARRIVED': 18, 'TRACKING_LOST': 1}}
+W1121 12:30:39.928000 77950 .venv/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/redirects.py:35] NOTE: Redirects are currently not supported in MacOs.
+12:30:40 INFO    visionaid.detector: Détecteur : yoloe26 (yoloe-26s-seg.pt) sur mps, prompts=['water bottle', 'bottle', 'flask']
+Loading weights:   0%|          | 0/287 [00:00<?, ?it/s]Loading weights: 100%|██████████| 287/287 [00:00<00:00, 11162.62it/s]
+12:30:41 INFO    visionaid.depth: Profondeur : depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf sur mps
+W1121 12:30:43.316000 77951 .venv/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/redirects.py:35] NOTE: Redirects are currently not supported in MacOs.
+Loading weights:   0%|          | 0/223 [00:00<?, ?it/s]Loading weights: 100%|██████████| 223/223 [00:00<00:00, 12070.33it/s]
+12:31:31 INFO    visionaid.realtime: Temps réel : {'n_cues': 135, 'e2e_p50_ms': 400.0661373138428, 'e2e_p95_ms': 608.1681251525874, 'cue_hz': 20.03317472503406, 'fresh_cue_hz': 4.5683759930398615, 'states': {'SEARCHING': 19, 'NAVIGATING': 12, 'OBSTACLE_ALERT': 54, 'APPROACHING': 31, 'ARRIVED': 18, 'TRACKING_LOST': 1}}
+--- run_live (faux téléphone rejouant la vidéo, 30 s) ---
+12:31:31 INFO    visionaid.runner: Graphe démarré : ['source', 'perception', 'geometry', 'world', 'planner', 'path_sink', 'viz']
+Process node-source:
+Traceback (most recent call last):
+  File "/Users/sarahhusson/.local/share/uv/python/cpython-3.12.16-macos-aarch64-none/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/Users/sarahhusson/.local/share/uv/python/cpython-3.12.16-macos-aarch64-none/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/sarahhusson/VisionAid/src/visionaid/bus/nodes.py", line 54, in run_node
+    block = load_factory(spec.factory)(cfg_raw)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sarahhusson/VisionAid/src/visionaid/apps/live_blocks.py", line 25, in make_phone_source
+    return PhoneSourceBlock(raw)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sarahhusson/VisionAid/src/visionaid/phone/block.py", line 91, in __init__
+    ).start()
+      ^^^^^^^
+  File "/Users/sarahhusson/VisionAid/src/visionaid/phone/server.py", line 122, in start
+    raise RuntimeError(f"échec du démarrage du serveur : {self._error}")
+RuntimeError: échec du démarrage du serveur : [Errno 48] error while attempting to bind on address ('0.0.0.0', 8443): [errno 48] address already in use
+12:31:33 INFO    visionaid.depth: Backend profondeur da3metric indisponible : ModuleNotFoundError("No module named 'depth_anything_3'")
+12:31:33 INFO    visionaid.depth: Backend profondeur da3small indisponible : ModuleNotFoundError("No module named 'depth_anything_3'")
+/Users/sarahhusson/VisionAid/.venv/lib/python3.12/site-packages/torch/jit/_serialization.py:176: FutureWarning: `torch.jit.load` is deprecated. Please switch to `torch.export`.
+  warnings.warn(
+W1121 12:31:36.087000 78008 .venv/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/redirects.py:35] NOTE: Redirects are currently not supported in MacOs.
+12:31:36 INFO    visionaid.detector: Détecteur : yoloe26 (yoloe-26s-seg.pt) sur mps, prompts=['water bottle', 'bottle', 'flask']
+Loading weights:   0%|          | 0/287 [00:00<?, ?it/s]Loading weights: 100%|██████████| 287/287 [00:00<00:00, 11102.59it/s]
+12:31:37 INFO    visionaid.depth: Profondeur : depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf sur mps
+W1121 12:31:39.337000 78009 .venv/lib/python3.12/site-packages/torch/distributed/elastic/multiprocessing/redirects.py:35] NOTE: Redirects are currently not supported in MacOs.
+Loading weights:   0%|          | 0/223 [00:00<?, ?it/s]Loading weights: 100%|██████████| 223/223 [00:00<00:00, 11284.12it/s]
+12:31:57 ERROR   visionaid.live: Nœud(s) arrêté(s) : {'node-source'}
+{
+  "n_valid_paths": 0,
+  "n_invalid_paths": 1,
+  "valid_path_hz": null,
+  "first_valid_after_s": null,
+  "e2e_capture_to_path_ms_p50": null,
+  "e2e_capture_to_path_ms_p95": null,
+  "n_latency": 0,
+  "object_states": {},
+  "valid_wall_times": [],
+  "invalid_wall_times": [
+    2.28
+  ]
+}
+--- sessions réelles ---
 --- agrégation ---
-{'fast': 0, 'slow': 0, 'offline': 0, 'realtime': 0}
-=== fin Sat Nov 21 04:06:50 CET 2026 : fast=0 slow=0 offline=0 realtime=0 ===
+{'fast': 0, 'slow': 0, 'offline': 0, 'realtime': 0, 'live_fake_phone': 0, 'sessions': 0}
+=== fin Sat Nov 21 12:32:07 CET 2026 : fast=0 slow=0 offline=0 realtime=0 live=0 sessions=0 ===
