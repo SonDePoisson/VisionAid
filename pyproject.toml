@@ -41,7 +41,7 @@ markers = [
     "slow: chargent un vrai modèle",
     "integration: pipeline complet",
 ]
-addopts = "-ra"
+addopts = "-ra -p no:dash"
 
 [tool.ruff]
 line-length = 100

@@ -29,7 +29,7 @@ bus:
   conflate_heavy: true
   recv_timeout_ms: 100
   node_stop_timeout_s: 2.0
-  hwm: 1000
+  hwm: 10000
 
 detector:
   backend: auto           # auto | yoloe26 | yoloe11 | yoloworld | coco
