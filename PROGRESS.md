@@ -11,3 +11,4 @@
 | 6 — Fusion 3D | ✅ | 11 unit + 3 slow/data | ~50 min | facteur d'échelle 0,76 ; caméra 1,39 m (σ 8 cm) ; gourde σ 7,5 cm à 0,87 m du sol ; costmap 27 % libre / 73 % occupé (pièce meublée) |
 | 7 — Planification | ✅ | 9 unit | ~30 min | A*/D* Lite en numba (2,9 ms / 1,9 ms incrémental sur 200×200) |
 | 8 — Logique de guidage | ✅ | 14 unit | ~20 min | priorités, hystérésis 0,15 m, maintien 0,3 s, messages ≥ 3 s |
+| 9 — Audio binaural | ✅ | 8 unit | ~25 min | ITD Woodworth, ILD Brown-Duda, indice arrière, sans clic ni écrêtage |
