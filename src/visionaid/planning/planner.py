@@ -89,6 +89,9 @@ class Planner:
         self.zone_penalty = float(getattr(p, "approach_penalty", 3.0))
         self.goal_keep = float(getattr(p, "goal_keep_ratio", 0.15))
         self.n_reach_goal = 0
+        self.detour_ratio = float(getattr(p, "approach_detour_ratio", 1.5))
+        self.detour_slack = float(getattr(p, "approach_detour_slack_m", 1.0))
+        self.n_relaxed = 0
 
     def plan(self, cm: Costmap, user_xy: np.ndarray, obj: ObjectEstimate) -> Path:
         t, idx = cm.t, cm.frame_idx
@@ -104,6 +107,8 @@ class Planner:
             return empty
         o_ij = (int(np.clip(o_ij[0], 0, h - 1)), int(np.clip(o_ij[1], 0, w - 1)))
         d_obj = None
+        strict = np.isfinite(cc)  # franchissable avec la marge normale
+        cc_strict = cc
         if self.zone > 0 and self.zone_clear > 0:
             cc, d_obj = self._relax_near_object(cm, cc, obj, res, origin)
         goal = nearest_passable(cc, o_ij, int(self.search_r / res), cm.state == FREE, toward=s_ij)
@@ -121,7 +126,19 @@ class Planner:
         self.n_plans += 1
         cells = None
         if self.reach > 0:
-            reach = self._reach_goal(cc, start, obj, res, origin, d_obj)
+            reach = self._reach_goal(cc, start, obj, res, origin, d_obj, strict)
+            if reach is not None and cc is not cc_strict and np.isfinite(cc_strict[start]):
+                # la marge réduite ne sert que si elle évite un vrai détour : sinon on garde le
+                # chemin avec la marge normale (contournement d'un obstacle surgissant, etc.)
+                normal = self._reach_goal(cc_strict, start, obj, res, origin, d_obj, strict)
+                if normal is not None:
+                    ln = len(normal[1]) * res
+                    lr = len(reach[1]) * res
+                    if ln <= self.detour_ratio * lr + self.detour_slack:
+                        reach = normal
+                        cc = cc_strict
+                    else:
+                        self.n_relaxed += 1
             if reach is not None:
                 goal, cells = reach
                 self.n_reach_goal += 1
@@ -181,7 +198,7 @@ class Planner:
             cc[relax] = self.zone_penalty + np.where(cm.state[relax] < 0, self.unknown_cost, 0.0)
         return cc, d_obj
 
-    def _reach_goal(self, cc, start, obj, res, origin, d_obj):
+    def _reach_goal(self, cc, start, obj, res, origin, d_obj, strict=None):
         """But « à portée de main » : parmi les cellules franchissables à moins de `reach_m` de
         l'objet (on attrape une gourde posée sur une table depuis le bord, pas besoin d'en faire
         le tour), celle dont le trajet depuis l'utilisateur est le moins coûteux. Hystérésis :
@@ -203,7 +220,14 @@ class Planner:
         s = start[0] * w + start[1]
         g, parent = _astar_kernel(flat, h, w, s, -1, False)  # coûts depuis l'utilisateur
         g = g.reshape(h, w)
-        score = np.where(cand, g + d_obj / res, np.inf)  # à coût égal, plus près de l'objet
+        # le but garde la marge normale s'il existe une telle cellule atteignable à portée de
+        # main ; il n'entre dans la bande à marge réduite qu'à défaut (objet au milieu d'une
+        # table). Sans cette préférence, l'agent du simulateur finissait collé au meuble.
+        if strict is not None:
+            pref = cand & strict & np.isfinite(g)
+            if pref.any():
+                cand = pref
+        score = np.where(cand, g + 3.0 * d_obj / res, np.inf)  # à coût égal, près de l'objet
         k = int(np.argmin(score))
         if not np.isfinite(score.flat[k]):
             return None

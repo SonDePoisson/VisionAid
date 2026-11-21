@@ -160,7 +160,9 @@ def test_goal_is_free_cell_near_object_on_furniture():
     assert st[gi, gj] != OCC
     # phase 27 : but « à portée de main » (≤ 0,70 m de l'objet), marge réduite à 0,20 m près de
     # l'objet (au lieu de 0,35 m) : au bord de la table, du côté de l'utilisateur
-    assert np.linalg.norm(path.goal - obj.position[:2]) <= cfg.planning.reach_m + 0.05
+    # objet à 0,50 m à l'intérieur de la table : aucune cellule accessible n'est à portée de main
+    # (0,55 m), repli sur la cellule franchissable la plus proche, au bord de la marge (~0,73 m)
+    assert np.linalg.norm(path.goal - obj.position[:2]) <= 0.80
     assert 2.5 - path.goal[0] >= cfg.planning.approach_clearance_m - 0.05  # ≥ 20 cm de la table
     assert 2.0 < path.goal[0] < 2.5 + 1e-6
 
