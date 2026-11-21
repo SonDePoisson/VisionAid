@@ -201,3 +201,30 @@ realtime:
   duration_s: 30.0
   plan_hz: 5.0
   cue_hz: 20.0
+
+# ---------------------------------------------------------------- phase 2 : téléphone
+phone:
+  host: 0.0.0.0
+  https_port: 8443
+  http_port: 8080          # sert uniquement ca.crt (installation du certificat sur le téléphone)
+  protocol_version: 1
+  capture_width: 640       # largeur demandée à getUserMedia (portrait : petite dimension)
+  capture_height: 480
+  jpeg_quality: 0.7
+  max_fps: 15.0
+  imu_batch_ms: 50
+  ping_interval_s: 1.0
+  certs_dir: .certs
+  ack_timeout_s: 1.0       # le téléphone renvoie une image si l'acquittement tarde trop
+
+body:
+  # repère corps (= tête, hypothèse du hackathon) exprimé dans la convention caméra
+  # (x droite, y bas, z avant) : identité = téléphone vertical, en portrait, sur le torse
+  T_cam_body: [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
+  camera_height_m: 1.30    # hauteur de la caméra au-dessus du sol, mesurée par l'utilisateur
+  # rotation a priori repère IMU (W3C) -> repère caméra arrière en portrait
+  R_cam_imu: [[1,0,0],[0,-1,0],[0,0,-1]]
+
+session:
+  dir: data/sessions
+  record: false

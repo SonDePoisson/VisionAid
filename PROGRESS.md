@@ -16,3 +16,9 @@
 | 11 — Intégration | ✅ (latence ⚠️) | 1 unit/integration (stubs) + 5 slow | ~1 h 15 | offline 485 frames en 72 s, ARRIVED à 0,23 m, cohérence guidage 7° (médiane) ; temps réel 30 s OK, p95 ≈ 450-650 ms > 300 ms |
 | 12 — Optimisations | ⚠️ partiel | — | ~15 min | export CoreML testé, non retenu (écart de score 5,8 %, plus lent) ; DA3-Small et graphe de poses non faits |
 | 13 — Rapport final | ✅ | night_run : 107 rapides + 23 lents verts, offline et temps réel OK | ~20 min | REPORT.md, captures dans docs/report/ |
+
+## Phase 2 du projet : du téléphone au chemin (`PLAN_PHASE2.md`)
+
+| Phase | Statut | Tests | Durée | Notes |
+|---|---|---|---|---|
+| 14 — Socle phase 2 | ✅ | 6 unit | ~20 min | messages `ImuSample`, `ImuBatch`, `ClockSync`, `Frame.t_phone/t_recv` ; config `phone`, `body`, `session` ; `docs/protocol.md` |

@@ -99,7 +99,10 @@ class GuidanceEngine:
     def __init__(self, cfg) -> None:
         g = cfg.guidance
         self.sm = GuidanceStateMachine(g)
-        self.T_cam_head = np.asarray(g.T_cam_head, float)
+        # tête = torse (hypothèse du hackathon) : `body.T_cam_body` prime sur `guidance.T_cam_head`
+        body = getattr(cfg, "body", None)
+        T = getattr(body, "T_cam_body", None) if body is not None else None
+        self.T_cam_head = np.asarray(T if T is not None else g.T_cam_head, float)
         self.cone = float(g.obstacle_cone_deg)
         self.obstacle_m = float(g.obstacle_m)
         self.corridor = float(g.obstacle_corridor_m)

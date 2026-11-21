@@ -19,6 +19,8 @@ class Frame:
     frame_idx: int
     image: np.ndarray
     K: np.ndarray = field(default_factory=lambda: np.eye(3))
+    t_phone: float | None = None  # instant de saisie, horloge du téléphone (s)
+    t_recv: float | None = None  # instant de réception, horloge du PC (s, time.time())
 
 
 @dataclass
@@ -111,9 +113,72 @@ class GuidanceCue:
     message: str = ""
 
 
+@dataclass
+class ImuSample:
+    """Échantillon inertiel, repère appareil (W3C : x droite, y haut de l'écran, z vers l'utilisateur)."""
+
+    t: float  # horloge du téléphone (s)
+    gyro: np.ndarray  # (3,) rad/s
+    accel: np.ndarray  # (3,) m/s², gravité incluse
+    accel_lin: np.ndarray | None = None  # (3,) m/s², sans gravité (si fourni)
+
+
+@dataclass
+class ImuBatch:
+    """Lot d'échantillons inertiels en tableaux (plus compact sur le bus)."""
+
+    t: np.ndarray  # (N,) horloge du téléphone (s)
+    gyro: np.ndarray  # (N,3) rad/s
+    accel: np.ndarray  # (N,3) m/s²
+    t_recv: float | None = None  # réception côté PC
+
+    @staticmethod
+    def from_samples(samples: list[ImuSample], t_recv: float | None = None) -> ImuBatch:
+        """Assemble des échantillons en lot."""
+        if not samples:
+            return ImuBatch(np.zeros(0), np.zeros((0, 3)), np.zeros((0, 3)), t_recv)
+        return ImuBatch(
+            np.array([s.t for s in samples], float),
+            np.array([s.gyro for s in samples], float).reshape(-1, 3),
+            np.array([s.accel for s in samples], float).reshape(-1, 3),
+            t_recv,
+        )
+
+    def samples(self) -> list[ImuSample]:
+        """Découpe le lot en échantillons."""
+        return [
+            ImuSample(float(t), g, a) for t, g, a in zip(self.t, self.gyro, self.accel, strict=True)
+        ]
+
+    def __len__(self) -> int:
+        return len(self.t)
+
+
+@dataclass
+class ClockSync:
+    """Décalage d'horloge : t_pc ≈ t_phone + offset (s), avec incertitude (demi-RTT minimal)."""
+
+    t: float
+    offset: float
+    uncertainty: float
+    rtt: float = 0.0
+
+
 MESSAGE_TYPES: dict[str, type] = {
     c.__name__: c
-    for c in (Frame, Pose, Depth, Detections, ObjectEstimate, Costmap, Path, GuidanceCue)
+    for c in (
+        Frame,
+        Pose,
+        Depth,
+        Detections,
+        ObjectEstimate,
+        Costmap,
+        Path,
+        GuidanceCue,
+        ImuSample,
+        ImuBatch,
+        ClockSync,
+    )
 }
 
 
