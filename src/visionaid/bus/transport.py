@@ -100,6 +100,18 @@ class Subscriber:
                 out[topic] = (sent, msg)
         return out
 
+    def drain_all(self) -> list[tuple[str, float, Any]]:
+        """Vide les files sans bloquer : tous les messages reçus, dans l'ordre d'arrivée."""
+        out: list[tuple[str, float, Any]] = []
+        for s in self.socks:
+            while True:
+                try:
+                    raw = s.recv(zmq.NOBLOCK)
+                except zmq.Again:
+                    break
+                out.append(self._unpack(raw))
+        return out
+
     def close(self) -> None:
         for s in self.socks:
             s.close(0)

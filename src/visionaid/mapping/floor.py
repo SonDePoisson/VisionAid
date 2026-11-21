@@ -66,14 +66,21 @@ class FloorTracker:
         self.d = 0.0
         self.n_updates = 0
         self.heading_ref: np.ndarray | None = None  # axe avant de la première caméra (repère VO)
+        self.tilts_deg: list[float] = []  # inclinaison plan ajusté / gravité (contrôle)
         self.origin_ref: np.ndarray | None = None
 
     @property
     def ready(self) -> bool:
         return self.n is not None
 
-    def update(self, depth: np.ndarray, K: np.ndarray, T_vo_cam: np.ndarray) -> bool:
-        """Met à jour le plan à partir de la moitié basse de l'image. Retourne True si mesuré."""
+    def update(
+        self, depth: np.ndarray, K: np.ndarray, T_vo_cam: np.ndarray, up: np.ndarray | None = None
+    ) -> bool:
+        """Met à jour le plan à partir de la moitié basse de l'image. Retourne True si mesuré.
+
+        `up` (gravité, repère VO) fixe la normale : le RANSAC ne sert plus qu'à trouver la hauteur
+        du sol et, en contrôle, à mesurer l'inclinaison du plan ajusté (`tilts_deg`).
+        """
         h = depth.shape[0]
         mask = np.zeros(depth.shape, bool)
         mask[int(h * (1 - self.bottom)) :] = True
@@ -81,13 +88,26 @@ class FloorTracker:
         if len(pc) < self.min_inliers:
             return False
         pw = transform(T_vo_cam, pc)
-        # indice « haut » : −y caméra (image droite) ou normale courante
-        up_hint = self.n if self.n is not None else -T_vo_cam[:3, 1]
         cam = T_vo_cam[:3, 3]
-        res = fit_plane_ransac(pw, self.iters, self.inlier_dist, self.rng, up_hint, self.max_tilt)
-        if res is None:
-            return False
-        n, d, inl = res
+        if up is not None:
+            g = np.asarray(up, float) / np.linalg.norm(up)
+            res = fit_plane_ransac(pw, self.iters, self.inlier_dist, self.rng, g, 15.0)
+            if res is None:
+                return False
+            n_fit, _, inl = res
+            self.tilts_deg.append(float(np.degrees(np.arccos(np.clip(np.dot(n_fit, g), -1, 1)))))
+            n = g  # normale imposée par la gravité ; hauteur du sol par les inliers
+            d = -float(np.median(pw[inl] @ n))
+            inl = np.abs(pw @ n + d) < self.inlier_dist
+        else:
+            # indice « haut » : −y caméra (image droite) ou normale courante
+            up_hint = self.n if self.n is not None else -T_vo_cam[:3, 1]
+            res = fit_plane_ransac(
+                pw, self.iters, self.inlier_dist, self.rng, up_hint, self.max_tilt
+            )
+            if res is None:
+                return False
+            n, d, inl = res
         if inl.sum() < self.min_inliers or np.dot(n, cam) + d < 0.3:
             return False  # pas assez de sol, ou caméra sous le « sol » (mur, meuble)
         if self.n is None:

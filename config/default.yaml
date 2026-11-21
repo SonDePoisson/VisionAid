@@ -230,3 +230,19 @@ body:
 session:
   dir: data/sessions
   record: false
+
+pose:
+  source: auto             # auto (vio si IMU disponible) | vo | vio
+
+vio:
+  gyro_seed: true          # rotation du gyroscope comme estimation initiale du PnP
+  max_disagree_deg: 8.0    # écart VO / gyroscope au-delà duquel la VO est jugée fausse
+  degraded_max_s: 2.0      # durée maximale en orientation IMU seule avant l'état « lost »
+  gravity_gain: 0.05
+  gravity_tolerance: 1.5   # |‖a‖ − g| (m/s²) toléré pour corriger la gravité
+  gravity_init_s: 0.5
+  scale:
+    enabled: true
+    ema: 0.1
+    bounds: [0.5, 2.0]
+    min_points: 150

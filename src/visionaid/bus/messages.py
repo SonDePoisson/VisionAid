@@ -30,10 +30,11 @@ class Pose:
     t: float
     frame_idx: int
     T_world_cam: np.ndarray
-    quality: str = "ok"  # ok | lost | init
+    quality: str = "ok"  # ok | init | degraded (orientation IMU seule) | lost
     n_inliers: int = 0
     reproj_err: float = 0.0
     is_keyframe: bool = False
+    up: np.ndarray | None = None  # direction « haut » (gravité) dans le repère monde de la pose
 
 
 @dataclass

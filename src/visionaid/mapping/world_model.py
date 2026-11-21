@@ -36,9 +36,11 @@ class WorldModel:
     ) -> tuple[Costmap | None, ObjectEstimate]:
         t = frame.t
         self.pose_quality = pose.quality
-        lost = pose.quality == "lost"
+        # « degraded » (orientation IMU seule, position gelée) : pose publiée, mais pas de
+        # cartographie ni d'ancrage, la position étant fausse dès que l'utilisateur marche
+        lost = pose.quality in ("lost", "degraded")
         if not lost:
-            self.floor.update(depth.depth, frame.K, pose.T_world_cam)
+            self.floor.update(depth.depth, frame.K, pose.T_world_cam, getattr(pose, "up", None))
         target = None
         if dets is not None and dets.target_idx >= 0:
             i = dets.target_idx

@@ -12,7 +12,7 @@ from visionaid.bus.messages import Detections, Frame, GuidanceCue, Pose
 from visionaid.guidance.cues import GuidanceEngine
 from visionaid.mapping.world_model import WorldModel
 from visionaid.planning.planner import Planner
-from visionaid.pose.source import VisualOdometry
+from visionaid.pose.source import make_pose_source
 from visionaid.utils.timing import LatencyStats, Timer
 
 
@@ -41,9 +41,13 @@ class OfflinePipeline:
     perception: object  # callable(Frame) -> Detections, ou None si détections fournies
     depth: object  # DepthEstimator
     stats: LatencyStats = field(default_factory=LatencyStats)
+    imu_source: object = None  # SessionImu (session téléphone) ou None
 
     def __post_init__(self) -> None:
-        self.vo = VisualOdometry(self.cfg)
+        self.vo = make_pose_source(
+            self.cfg, self.imu_source is not None and len(self.imu_source) > 0
+        )
+        self._imu_fed: float | None = None
         self.world = WorldModel(self.cfg)
         self.planner = Planner(self.cfg)
         self.engine = GuidanceEngine(self.cfg)
@@ -61,6 +65,13 @@ class OfflinePipeline:
         with Timer(st, "depth"):
             depth = self.depth(frame)
         with Timer(st, "pose"):
+            if self.imu_source is not None and hasattr(self.vo, "add_imu"):
+                # IMU jusqu'à un peu après l'image (le décalage δ peut être positif)
+                t_end = frame.t + 0.3
+                self.vo.add_imu(self.imu_source.window(self._imu_fed, t_end))
+                self._imu_fed = t_end
+            if hasattr(self.vo, "correct_depth"):
+                depth = self.vo.correct_depth(frame, depth)
             pose = self.vo.update(frame, depth)
         with Timer(st, "mapping"):
             cm, obj = self.world.update(frame, depth, pose, dets)

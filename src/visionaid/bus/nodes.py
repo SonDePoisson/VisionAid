@@ -29,6 +29,7 @@ class NodeSpec:
     trigger: str | None = None  # sujet déclencheur ; None = cadence fixe (rate_hz)
     rate_hz: float = 0.0  # cadence max (0 = illimitée si trigger)
     heavy_inputs: list[str] = field(default_factory=list)  # entrées en mode « dernière valeur »
+    accumulate_inputs: list[str] = field(default_factory=list)  # entrées livrées en liste (IMU)
 
 
 def load_factory(path: str):
@@ -65,6 +66,7 @@ def run_node(
             subs.append(Subscriber(endpoint(port), heavy, conflate=True))
     stats = LatencyStats()
     latest: dict[str, Any] = {}
+    acc: dict[str, list] = {}
     period = 1.0 / spec.rate_hz if spec.rate_hz > 0 else 0.0
     next_tick = time.perf_counter()
     n_out = 0
@@ -73,8 +75,11 @@ def run_node(
             fresh_trigger = False
             trig_sent = None
             for s in subs:
-                for topic, (sent, msg) in s.drain().items():
-                    latest[topic] = msg
+                for topic, sent, msg in s.drain_all():
+                    if topic in spec.accumulate_inputs:
+                        acc.setdefault(topic, []).append(msg)
+                    else:
+                        latest[topic] = msg
                     stats.add(f"age_in:{topic}", time.time() - sent)
                     if topic == spec.trigger:
                         fresh_trigger = True
@@ -93,7 +98,10 @@ def run_node(
                 continue
             next_tick = max(next_tick + period, now) if period else now
             t0 = time.perf_counter()
-            out = block.process(dict(latest))
+            ins = dict(latest)
+            for topic in spec.accumulate_inputs:  # tout ce qui est arrivé depuis le dernier appel
+                ins[topic] = acc.pop(topic, [])
+            out = block.process(ins)
             stats.add("process", time.perf_counter() - t0)
             if out and pub is not None:
                 for topic, msg in out.items():

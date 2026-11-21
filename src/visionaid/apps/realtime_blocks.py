@@ -134,24 +134,34 @@ class GeometryBlock:
 
     def __init__(self, raw: dict) -> None:
         from visionaid.perception.depth import DepthEstimator
-        from visionaid.pose.source import VisualOdometry
+        from visionaid.pose.source import make_pose_source
 
         cfg = _cfg(raw)
         self.depth = DepthEstimator(cfg)  # sans cache : latence réelle
-        self.vo = VisualOdometry(cfg)
+        # VIO si la source publie l'IMU (téléphone, session) ; VO sinon (vidéo)
+        self.vo = make_pose_source(cfg, bool(raw.get("_imu")))
         self.n = 0
 
     def process(self, inputs: dict[str, Any]) -> dict[str, Any] | None:
+        from visionaid.pose.source import merge_imu
+
+        if hasattr(self.vo, "add_imu"):
+            self.vo.add_imu(merge_imu(inputs.get("imu")))
         f = inputs.get("frame")
         if f is None:
             return None
         d = self.depth(f)
+        if hasattr(self.vo, "correct_depth"):
+            d = self.vo.correct_depth(f, d)
         p = self.vo.update(f, d)
         self.n += 1
         return {"depth": d, "pose": p}
 
     def stats(self) -> dict:
-        return {"n": self.n, "lost_fraction": self.vo.lost_fraction}
+        s = {"n": self.n, "lost_fraction": self.vo.lost_fraction}
+        if hasattr(self.vo, "stats"):
+            s.update(self.vo.stats())
+        return s
 
 
 class WorldBlock:

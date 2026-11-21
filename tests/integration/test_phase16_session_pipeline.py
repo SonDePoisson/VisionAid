@@ -47,7 +47,11 @@ def make_session(path, n=45):
         path,
         imgs,
         fps=15,
-        imu_fn=lambda t: (np.zeros(3), np.array([0.0, 9.81, 0.0])),
+        # caméra inclinée de 20° vers le bas, comme `scene_depth` (gravité cohérente avec la scène)
+        imu_fn=lambda t: (
+            np.zeros(3),
+            9.81 * np.array([0.0, np.cos(np.radians(20)), np.sin(np.radians(20))]),
+        ),
         meta={"target": "où est ma gourde"},
     )
     return base

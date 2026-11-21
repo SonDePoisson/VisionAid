@@ -40,10 +40,11 @@ def graph(raw: dict) -> list[NodeSpec]:
         NodeSpec(
             "geometry",
             f"{B}:GeometryBlock",
-            inputs=["frame"],
+            inputs=["frame", "imu"] if raw.get("_imu") else ["frame"],
             outputs=["depth", "pose"],
             trigger="frame",
             heavy_inputs=["frame"],
+            accumulate_inputs=["imu"] if raw.get("_imu") else [],
         ),
         NodeSpec(
             "world",
@@ -84,6 +85,7 @@ def run(
     raw = raw or load_raw()
     if session:
         raw["_session"] = session
+        raw["_imu"] = True
     duration_s = float(duration_s or raw["realtime"]["duration_s"])
     # les nœuds chargent leurs modèles pendant `warmup_s` ; la lecture démarre à t0
     raw["_t0_wall"] = time.time() + warmup_s

@@ -56,6 +56,28 @@ class ArkitPoseSource:
         raise NotImplementedError
 
 
+def make_pose_source(cfg, imu_available: bool = False):
+    """PoseSource selon `pose.source` : `vio` si IMU disponible en mode `auto`, sinon `vo`."""
+    pc = getattr(cfg, "pose", None)
+    mode = str(getattr(pc, "source", "auto") or "auto")
+    if mode == "vio" or (mode == "auto" and imu_available):
+        from visionaid.pose.vio import VisualInertialOdometry
+
+        return VisualInertialOdometry(cfg)
+    return VisualOdometry(cfg)
+
+
+def merge_imu(x):
+    """Entrée IMU du bus : un lot, une liste de lots (accumulés) ou None → un lot ou None."""
+    if x is None:
+        return None
+    if isinstance(x, list):
+        from visionaid.phone.block import merge_batches
+
+        return merge_batches(x)
+    return x
+
+
 def run_vo_video(cfg, frames=None, depth_est=None) -> tuple[list[Pose], VisualOdometry]:
     """Odométrie sur une séquence de frames (par défaut toute la vidéo), profondeur en cache."""
     from visionaid.io.sources import VideoFileSource

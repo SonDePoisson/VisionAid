@@ -59,7 +59,12 @@ def run(
         pinfo = {}
     dets_by_idx = {d.frame_idx: d for d in (dets_list or [])}
     depth_est = depth_est or video_depth_estimator(cfg, video)
-    pipe = OfflinePipeline(cfg, perception, depth_est)
+    imu_source = None
+    if hasattr(src, "session"):
+        from visionaid.io.session import SessionImu
+
+        imu_source = SessionImu(src.session) if len(src.session.imu_t) else None
+    pipe = OfflinePipeline(cfg, perception, depth_est, imu_source=imu_source)
     tmp_video = out / "annotated_raw.mp4"
     vw = None
     rlog = RerunLogger(out / "session.rrd", enabled=bool(cfg.viz.rerun if rerun is None else rerun))
@@ -181,6 +186,11 @@ def run(
         "lost_fraction": float(np.mean([r.pose_quality == "lost" for r in pipe.records]))
         if pipe.records
         else 0.0,
+        "degraded_fraction": float(np.mean([r.pose_quality == "degraded" for r in pipe.records]))
+        if pipe.records
+        else 0.0,
+        "pose_source": type(pipe.vo).__name__,
+        "pose_stats": pipe.vo.stats() if hasattr(pipe.vo, "stats") else None,
         "state_seconds": states,
         "state_timeline": timeline,
         "final_state": final.state if final else None,
