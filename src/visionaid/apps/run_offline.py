@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 
 from visionaid.audio.renderer import AudioRenderer
-from visionaid.io.sources import VideoFileSource
+from visionaid.io.session import open_media
 from visionaid.perception.depth import video_depth_estimator
 from visionaid.perception.pipeline import run_video_perception, unpack_masks
 from visionaid.pipeline import OfflinePipeline, guidance_coherence
@@ -52,7 +52,7 @@ def run(
     out = Path(out_dir or resolve_path(cfg.paths.outputs))
     out.mkdir(parents=True, exist_ok=True)
     t_start = time.perf_counter()
-    src = VideoFileSource.from_config(cfg, path=video, max_frames=max_frames)
+    src = open_media(cfg, video, max_frames=max_frames)  # vidéo ou session téléphone
     if dets_list is None and perception is None:
         dets_list, pinfo = run_video_perception(cfg, video)
     else:
@@ -213,9 +213,12 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--config", default=None)
     ap.add_argument("--video", default=None)
+    ap.add_argument(
+        "--session", default=None, help="dossier de session téléphone (data/sessions/…)"
+    )
     ap.add_argument("--max-frames", type=int, default=None)
     args = ap.parse_args(argv)
-    return run(load_config(args.config), args.video, max_frames=args.max_frames)
+    return run(load_config(args.config), args.session or args.video, max_frames=args.max_frames)
 
 
 if __name__ == "__main__":

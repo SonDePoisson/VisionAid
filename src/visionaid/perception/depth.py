@@ -221,11 +221,11 @@ def video_depth_estimator(
     cfg, video: str | Path | None = None, backend: DepthBackend | None = None
 ) -> DepthEstimator:
     """Estimateur avec cache disque propre à (vidéo, modèle, résolution)."""
-    from visionaid.utils.report import file_hash
+    from visionaid.io.session import media_hash
 
     video = resolve_path(video or cfg.paths.video)
     be = backend or make_backend(cfg)
-    key = file_hash(video, f"{be.name}|{cfg.depth.input_width}|{cfg.video.width}")
+    key = media_hash(video, f"{be.name}|{cfg.depth.input_width}|{cfg.video.width}")
     return DepthEstimator(cfg, backend=be, cache_key=f"{video.stem}_{key}")
 
 

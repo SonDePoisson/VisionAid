@@ -57,6 +57,72 @@ class ReplaySourceBlock:
         return {"skipped_at_source": self.skipped + self.src.skipped, "loops": self.loops}
 
 
+class SessionReplayBlock:
+    """Rejoue une session téléphone au rythme réel (en boucle) : publie `frame` et `imu`.
+
+    Les temps sont ramenés au début de la session (comme le temps vidéo de `ReplaySourceBlock`),
+    images et IMU avec le même décalage ; `t_phone` garde l'horloge d'origine.
+    """
+
+    def __init__(self, raw: dict) -> None:
+        from visionaid.io.session import SessionImu, SessionSource, load_session
+
+        self.cfg = _cfg(raw)
+        self.session = load_session(resolve_path(raw["_session"]))
+        self.imu = SessionImu(self.session)
+        self._mk = lambda: _replay(SessionSource.from_config(self.cfg, self.session.dir), self.cfg)
+        self.src = self._mk()
+        self.t_ref = self.session.frames[0]["t_phone"]
+        self.offset_t = 0.0
+        self.offset_idx = 0
+        self.last: Frame | None = None
+        self.last_t_phone: float | None = None
+        self.loops = 0
+        self.skipped = 0
+        t0 = float(raw.get("_t0_wall", time.time()))
+        while time.time() < t0:
+            time.sleep(0.001)
+
+    def process(self, inputs: dict[str, Any]) -> dict[str, Any] | None:
+        from visionaid.bus.messages import ImuBatch
+
+        f = self.src.read()
+        if f is None:  # fin de session : on reboucle (temps et index continus, IMU repart)
+            self.skipped += self.src.skipped
+            if self.last is not None:
+                self.offset_t = self.last.t + 1.0 / self.src.fps
+                self.offset_idx = self.last.frame_idx + 1
+            self.loops += 1
+            self.last_t_phone = None
+            self.src = self._mk()
+            f = self.src.read()
+            if f is None:
+                return None
+        shift = self.offset_t - self.t_ref
+        imu = self.imu.window(self.last_t_phone, f.t)
+        self.last_t_phone = f.t
+        g = Frame(f.t + shift, f.frame_idx + self.offset_idx, f.image, f.K, f.t_phone, time.time())
+        self.last = g
+        out: dict[str, Any] = {}
+        if len(imu):
+            out["imu"] = ImuBatch(imu.t + shift, imu.gyro, imu.accel, time.time())
+        out["frame"] = g
+        return out
+
+    def stats(self) -> dict:
+        return {
+            "skipped_at_source": self.skipped + self.src.skipped,
+            "loops": self.loops,
+            "session": self.session.name,
+        }
+
+
+def _replay(src, cfg):
+    from visionaid.io.sources import ReplaySource
+
+    return ReplaySource(src, float(cfg.replay.speed))
+
+
 def make_perception(raw: dict):
     from visionaid.perception.pipeline import PerceptionBlock
 

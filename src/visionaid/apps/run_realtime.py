@@ -22,8 +22,13 @@ B = "visionaid.apps.realtime_blocks"
 
 def graph(raw: dict) -> list[NodeSpec]:
     rt = raw["realtime"]
+    source = (
+        NodeSpec("source", f"{B}:SessionReplayBlock", outputs=["frame", "imu"])
+        if raw.get("_session")
+        else NodeSpec("source", f"{B}:ReplaySourceBlock", outputs=["frame"])
+    )
     return [
-        NodeSpec("source", f"{B}:ReplaySourceBlock", outputs=["frame"]),
+        source,
         NodeSpec(
             "perception",
             f"{B}:make_perception",
@@ -70,8 +75,15 @@ def graph(raw: dict) -> list[NodeSpec]:
     ]
 
 
-def run(duration_s: float | None = None, raw: dict | None = None, warmup_s: float = 25.0) -> dict:
+def run(
+    duration_s: float | None = None,
+    raw: dict | None = None,
+    warmup_s: float = 25.0,
+    session: str | None = None,
+) -> dict:
     raw = raw or load_raw()
+    if session:
+        raw["_session"] = session
     duration_s = float(duration_s or raw["realtime"]["duration_s"])
     # les nœuds chargent leurs modèles pendant `warmup_s` ; la lecture démarre à t0
     raw["_t0_wall"] = time.time() + warmup_s
@@ -125,8 +137,9 @@ def run(duration_s: float | None = None, raw: dict | None = None, warmup_s: floa
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--duration", type=float, default=None)
+    ap.add_argument("--session", default=None, help="dossier de session téléphone à rejouer")
     args = ap.parse_args(argv)
-    s = run(args.duration)
+    s = run(args.duration, session=args.session)
     update_report("realtime", s)
     log.info("Temps réel : %s", s["e2e_latency"])
     return s

@@ -12,7 +12,6 @@ import numpy as np
 from visionaid.bus.messages import Detections, Frame
 from visionaid.utils.config import load_config, resolve_path, to_dict
 from visionaid.utils.logging import get_logger
-from visionaid.utils.report import file_hash
 
 log = get_logger("perception")
 
@@ -66,7 +65,6 @@ def run_video_perception(
     cfg=None, video=None, use_cache: bool = True
 ) -> tuple[list[Detections], dict]:
     """Perception sur toute la vidéo, avec cache disque (.cache/perception/<hash>.pkl)."""
-    from visionaid.io.sources import VideoFileSource
 
     cfg = cfg or load_config()
     video = resolve_path(video or cfg.paths.video)
@@ -79,13 +77,15 @@ def run_video_perception(
     )
     th_file = resolve_path(cfg.reid.threshold_file)
     key_cfg += th_file.read_text() if th_file.exists() else ""
-    key = file_hash(video, key_cfg)
+    from visionaid.io.session import media_hash, open_media
+
+    key = media_hash(video, key_cfg)
     cpath = resolve_path(cfg.paths.cache) / "perception" / f"{video.stem}_{key}.pkl"
     if use_cache and cpath.exists():
         data = pickle.loads(cpath.read_bytes())
         return data["dets"], data["info"]
     block = PerceptionBlock(cfg)
-    src = VideoFileSource.from_config(cfg, path=video)
+    src = open_media(cfg, video)  # vidéo ou session téléphone
     dets = []
     while (f := src.read()) is not None:
         d = block(f)
