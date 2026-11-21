@@ -157,6 +157,9 @@ planning:
   lookahead_m: 1.0
   replan_hz: 5.0
   target_search_radius_m: 1.5
+  commit_ratio: 0.2        # garde le chemin précédent s'il fait au plus +20 % …
+  commit_margin_m: 0.3     # … + 30 cm de plus que le nouveau, et reste praticable
+  near_goal_m: 0.35        # chemin restant plus court : la visée pointe vers l'objet
 
 guidance:
   approach_m: 1.2

@@ -74,6 +74,13 @@ class Planner:
         self._dkey = None
         self.n_plans = 0
         self.n_fail = 0
+        # stabilité (phase 25) : engagement sur le chemin précédent, visée vers l'objet au but
+        self.commit_ratio = float(getattr(p, "commit_ratio", 0.0) or 0.0)
+        self.commit_margin = float(getattr(p, "commit_margin_m", 0.0) or 0.0)
+        self.near_goal = float(getattr(p, "near_goal_m", 0.0) or 0.0)
+        self.prev_pts: np.ndarray | None = None
+        self.prev_goal: np.ndarray | None = None
+        self.n_kept = 0
 
     def plan(self, cm: Costmap, user_xy: np.ndarray, obj: ObjectEstimate) -> Path:
         t, idx = cm.t, cm.frame_idx
@@ -122,8 +129,57 @@ class Planner:
             else np.vstack([user_xy[None, :2], pts])
         )
         goal_xy = world_of(goal, origin, res)
-        la = self._lookahead_los(cm, pts, s_ij, start, origin, res)
-        return Path(t, idx, pts, la, goal_xy, True, polyline_length(pts))
+        kept = self._keep_previous(cc, origin, res, user_xy[:2], goal_xy, polyline_length(pts))
+        if kept is not None:
+            pts = kept
+            goal_xy = kept[-1].copy()  # le but publié est la fin du chemin réellement suivi
+            self.n_kept += 1
+        self.prev_pts, self.prev_goal = pts.copy(), goal_xy.copy()
+        length = polyline_length(pts)
+        if self.near_goal > 0 and length < self.near_goal:
+            # au but : la direction d'un point à quelques centimètres n'a plus de sens, on vise
+            # l'objet lui-même (stable), comme le fait le guidage en fin d'approche
+            la = np.asarray(obj.position[:2], float).copy()
+        else:
+            la = self._lookahead_los(cm, pts, s_ij, start, origin, res)
+        return Path(t, idx, pts, la, goal_xy, True, length)
+
+    def _keep_previous(self, cc, origin, res, user_xy, goal_xy, new_len) -> np.ndarray | None:
+        """Chemin précédent, raccourci depuis l'utilisateur, s'il reste praticable et pas
+        nettement plus long que le nouveau (évite l'alternance entre deux contournements
+        presque équivalents sur une carte bruitée). None sinon."""
+        if self.commit_ratio <= 0 or self.prev_pts is None or len(self.prev_pts) < 2:
+            return None
+        if np.linalg.norm(goal_xy - self.prev_goal) > 0.15:
+            # but déplacé (même de peu) : nouveau chemin. Sinon le chemin gardé finirait à
+            # l'ancien but pendant que le guidage compare la position au nouveau (agent bloqué
+            # en approche dans le simulateur, couloir : 94 % → 67 % de succès)
+            return None
+        prev = self.prev_pts
+        # point du chemin précédent le plus proche de l'utilisateur (projection sur les segments)
+        best, best_k, best_p = np.inf, 0, prev[0]
+        for k in range(len(prev) - 1):
+            a, b = prev[k], prev[k + 1]
+            ab = b - a
+            u = float(np.clip(np.dot(user_xy - a, ab) / max(np.dot(ab, ab), 1e-12), 0.0, 1.0))
+            p = a + u * ab
+            d = float(np.linalg.norm(user_xy - p))
+            if d < best:
+                best, best_k, best_p = d, k, p
+        if best > 0.5:
+            return None  # l'utilisateur s'est écarté du chemin précédent
+        rest = np.vstack([user_xy[None], best_p[None], prev[best_k + 1 :]])
+        rest = rest[np.r_[True, np.linalg.norm(np.diff(rest, axis=0), axis=1) > 1e-6]]
+        h, w = cc.shape
+        for a, b in zip(rest[:-1], rest[1:], strict=True):  # praticable sur la nouvelle carte
+            n = max(int(np.linalg.norm(b - a) / (0.5 * res)), 1)
+            for s_ in np.linspace(0.0, 1.0, n + 1):
+                i, j = cell_of(a + s_ * (b - a), origin, res)
+                if not (0 <= i < h and 0 <= j < w) or not np.isfinite(cc[i, j]):
+                    return None
+        if polyline_length(rest) > new_len * (1.0 + self.commit_ratio) + self.commit_margin:
+            return None
+        return rest
 
     def _lookahead_los(self, cm: Costmap, pts, user_ij, start, origin, res) -> np.ndarray:
         """Point d'anticipation le plus loin (≤ lookahead_m) en ligne de vue de l'utilisateur.
