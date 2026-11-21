@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import time
@@ -67,7 +68,9 @@ def run(
 
         imu_source = SessionImu(src.session) if len(src.session.imu_t) else None
     pipe = OfflinePipeline(cfg, perception, depth_est, imu_source=imu_source)
-    tmp_video = out / "annotated_raw.mp4"
+    # nom propre à chaque lancement : deux rejeux simultanés dans le même dossier ne doivent pas
+    # se supprimer mutuellement leur vidéo intermédiaire
+    tmp_video = out / f"annotated_raw_{os.getpid()}.mp4"
     vw = None
     rlog = RerunLogger(out / "session.rrd", enabled=bool(cfg.viz.rerun if rerun is None else rerun))
     n = 0

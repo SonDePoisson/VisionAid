@@ -283,7 +283,12 @@ def main(argv=None) -> dict:
         "--fake-phone", nargs="?", const="", default=None, help="faux téléphone [vidéo]"
     )
     ap.add_argument("--rerun", choices=["off", "live", "file", "both"], default="live")
-    ap.add_argument("--height", type=float, default=None, help="hauteur caméra mesurée (m)")
+    ap.add_argument("--height", type=float, default=None, help="hauteur caméra mesurée (m ou cm)")
+    ap.add_argument(
+        "--record",
+        default=None,
+        help="enregistre aussi la session du direct (data/sessions/<date>_<nom>)",
+    )
     ap.add_argument(
         "--depth-width",
         type=int,
@@ -302,6 +307,11 @@ def main(argv=None) -> dict:
 
         ov["body.camera_height_m"] = length_to_m(args.height, "hauteur caméra")
     raw = load_raw(overrides=ov or None)
+    if args.record:
+        if args.session:
+            raise SystemExit("--record ne s'applique qu'au direct (pas au rejeu d'une session)")
+        raw["_phone_record"] = args.record
+        raw["_phone_meta"] = {"target": args.target, "notes": ""}
     fake = args.fake_phone is not None
     s = run(
         args.duration or 10**7,

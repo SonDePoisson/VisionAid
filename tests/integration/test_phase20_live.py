@@ -55,3 +55,32 @@ def test_fake_phone_to_path_with_reconnection(tmp_path):
     g = s["geometry"]
     assert g["imu_calib"] in ("a priori", "calibration") and g["no_imu_frames"] < g["frames"] * 0.2
     assert len(s["fake_phone"]) == 2 and all(f["sent"] > 20 for f in s["fake_phone"])
+
+
+@pytest.mark.timeout(120)
+def test_live_records_session(tmp_path):
+    """`run_live --record` : le direct enregistre aussi la session (rejouable ensuite)."""
+    from visionaid.apps.run_live import run
+    from visionaid.io.session import load_session
+
+    raw = load_raw(
+        overrides={
+            "video.width": 320,
+            "paths.outputs": str(tmp_path / "out"),
+            "paths.cache": str(tmp_path / "cache"),
+            "phone.certs_dir": str(tmp_path / "certs"),
+            "phone.calib_dir": str(tmp_path / "calib"),
+            "session.dir": str(tmp_path / "sessions"),
+            "bus.base_port": free_port() + 40,
+        }
+    )
+    raw["_phone_https_port"] = free_port()
+    raw["_phone_http_port"] = 0
+    raw["_phone_record"] = "essai_direct"
+    raw["_phone_meta"] = {"target": "où est ma gourde", "notes": ""}
+    run(raw=raw, fake=True, fake_schedule=[(4.0, 0.0)], rerun="off", warmup_s=3.0, stub_models=True)
+    dirs = list((tmp_path / "sessions").glob("*_essai_direct"))
+    assert len(dirs) == 1
+    s = load_session(dirs[0])
+    assert len(s.frames) > 20 and len(s.imu_t) > 100
+    assert s.meta["target"] == "où est ma gourde"
