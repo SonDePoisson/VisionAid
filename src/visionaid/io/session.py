@@ -137,6 +137,7 @@ class SessionSource:
         cfg_intrinsics=None,
         max_frames: int | None = None,
         start_frame: int = 0,
+        cfg=None,
     ) -> None:
         import cv2
 
@@ -150,11 +151,16 @@ class SessionSource:
             self.out_w, self.out_h = int(width), int(round(h0 * width / w0))
         else:
             self.out_w, self.out_h = w0, h0
-        self._intr = (
-            make_intrinsics(cfg_intrinsics, self.out_w, self.out_h)
-            if cfg_intrinsics is not None
-            else make_intrinsics(_DefaultIntr(), self.out_w, self.out_h)
-        )
+        if cfg is not None:  # calibration de l'appareil si disponible
+            from visionaid.calib.device import phone_intrinsics
+
+            self._intr = phone_intrinsics(cfg, self.out_w, self.out_h)
+        else:
+            self._intr = make_intrinsics(
+                cfg_intrinsics if cfg_intrinsics is not None else _DefaultIntr(),
+                self.out_w,
+                self.out_h,
+            )
         self.max_frames = max_frames
         self._i = start_frame
         self._start = start_frame
@@ -164,7 +170,7 @@ class SessionSource:
     def from_config(cls, cfg, path: str | Path, **kw) -> SessionSource:
         from visionaid.utils.config import resolve_path
 
-        return cls(resolve_path(path), width=cfg.video.width, cfg_intrinsics=cfg.intrinsics, **kw)
+        return cls(resolve_path(path), width=cfg.video.width, cfg=cfg, **kw)
 
     @property
     def intrinsics(self) -> Intrinsics:

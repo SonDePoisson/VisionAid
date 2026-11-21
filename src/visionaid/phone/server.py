@@ -22,7 +22,7 @@ import numpy as np
 from aiohttp import WSMsgType, web
 
 from visionaid.bus.messages import ClockSync, Frame, ImuBatch
-from visionaid.io.intrinsics import make_intrinsics
+from visionaid.calib.device import phone_intrinsics
 from visionaid.phone.certs import CertPaths, ensure_certs, server_ssl_context
 from visionaid.phone.clock import ClockEstimator
 from visionaid.phone.protocol import (
@@ -374,7 +374,7 @@ class PhoneServer:
                     self.stats.n_bad += 1
                     return
                 h, w = img.shape[:2]
-                K = make_intrinsics(self.cfg.intrinsics, w, h).K
+                K = self._K(w, h)
                 self.on_frame(Frame(pkt.t_phone, pkt.seq, img, K, pkt.t_phone, t_recv))
         finally:
             # acquittement après ingestion : le téléphone ne va jamais plus vite que le PC,
@@ -400,6 +400,13 @@ class PhoneServer:
             )
 
     # ------------------------------------------------------------------ utilitaires
+    def _K(self, w: int, h: int) -> np.ndarray:
+        """Intrinsèques (calibration de l'appareil si présente), mises en cache par taille."""
+        cache = self.__dict__.setdefault("_K_cache", {})
+        if (w, h) not in cache:
+            cache[(w, h)] = phone_intrinsics(self.cfg, w, h).K
+        return cache[(w, h)]
+
     def urls(self) -> list[str]:
         """URLs HTTPS à ouvrir sur le téléphone (une par adresse locale)."""
         from visionaid.phone.certs import host_names, local_ips

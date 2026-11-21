@@ -204,6 +204,8 @@ realtime:
 
 # ---------------------------------------------------------------- phase 2 : téléphone
 phone:
+  device: iphone12         # nom des fichiers de calibration <calib_dir>/<device>_*.yaml
+  calib_dir: config/calib
   host: 0.0.0.0
   https_port: 8443
   http_port: 8080          # sert uniquement ca.crt (installation du certificat sur le téléphone)

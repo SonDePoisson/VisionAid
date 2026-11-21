@@ -1,0 +1,212 @@
+"""Calibration IMU ↔ caméra à partir d'une session : biais du gyroscope, décalage temporel, rotation.
+
+1. **Biais** : moyenne du gyroscope sur les segments immobiles (gyro et accélération stables).
+2. **Rotation visuelle** entre images successives (`VisualRotation`) → vitesse angulaire caméra.
+3. **Décalage temporel** δ : maximise la corrélation entre ‖ω_gyro‖ moyennée sur [t_i+δ, t_j+δ]
+   et ‖ω_visuelle‖ (insensible à la rotation inconnue).
+4. **Rotation** `R_cam_imu` par Kabsch sur les paires (ω_gyro, ω_visuelle), et **facteur
+   d'échelle** ‖ω_vis‖/‖R ω_gyro‖ : ≈ 1 si les unités sont bonnes, ≈ π/180 (ou 180/π) sinon.
+
+Convention : une image horodatée t (horloge téléphone) correspond à l'instant IMU t + δ.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+import numpy as np
+import yaml
+
+from visionaid.calib.rotation import VisualRotation, kabsch, rotation_angle_deg
+
+
+@dataclass
+class ImuCamCalibration:
+    """Résultat de la calibration IMU ↔ caméra."""
+
+    R_cam_imu: np.ndarray
+    gyro_bias: np.ndarray  # rad/s, repère IMU (après correction d'unités)
+    time_offset_s: float  # δ : instant IMU = instant image + δ
+    gyro_scale: float  # ‖ω_vis‖ / ‖R ω_gyro‖ mesuré (avant correction)
+    units_ok: bool
+    units_fix: float  # facteur à appliquer au gyroscope (1, π/180 ou 180/π)
+    correlation: float
+    n_pairs: int
+    residual_deg_s: float  # résidu médian ‖ω_vis − R ω_gyro‖ (deg/s)
+    prior_angle_deg: float  # écart à la rotation a priori
+    static_s: float  # durée immobile utilisée pour le biais
+    notes: list[str] = field(default_factory=list)
+
+    def to_yaml(self, path: str | Path, extra: dict | None = None) -> None:
+        d = asdict(self)
+        d["R_cam_imu"] = np.asarray(self.R_cam_imu).round(6).tolist()
+        d["gyro_bias"] = [float(x) for x in self.gyro_bias]
+        for k in ("time_offset_s", "gyro_scale", "units_fix", "correlation"):
+            d[k] = float(d[k])
+        d["residual_deg_s"] = float(self.residual_deg_s)
+        d["prior_angle_deg"] = float(self.prior_angle_deg)
+        d["static_s"] = float(self.static_s)
+        d["units_ok"] = bool(self.units_ok)
+        d.update(extra or {})
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text(yaml.safe_dump(d, sort_keys=False, allow_unicode=True))
+
+
+def static_mask(
+    t: np.ndarray,
+    gyro: np.ndarray,
+    accel: np.ndarray,
+    win_s: float = 0.5,
+    gyro_std: float = 0.03,
+    acc_std: float = 0.15,
+) -> np.ndarray:
+    """Échantillons appartenant à une fenêtre immobile (écarts-types faibles)."""
+    n = len(t)
+    mask = np.zeros(n, bool)
+    if n < 5:
+        return mask
+    i = 0
+    while i < n:
+        j = int(np.searchsorted(t, t[i] + win_s))
+        if j - i >= 5:
+            if gyro[i:j].std(0).max() < gyro_std and accel[i:j].std(0).max() < acc_std:
+                mask[i:j] = True
+        i = max(j, i + 1) if j - i < 5 else i + max((j - i) // 2, 1)
+    return mask
+
+
+def mean_gyro(t: np.ndarray, gyro: np.ndarray, a: float, b: float) -> np.ndarray | None:
+    """Moyenne temporelle du gyroscope sur [a, b] (intégration trapézoïdale par interpolation)."""
+    if b <= a or a < t[0] or b > t[-1]:
+        return None
+    inside = (t > a) & (t < b)
+    ts = np.r_[a, t[inside], b]
+    g = np.stack([np.interp(ts, t, gyro[:, k]) for k in range(3)], 1)
+    return np.trapezoid(g, ts, axis=0) / (b - a)
+
+
+def visual_rates(images, times, K, every: int = 1) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Vitesses angulaires visuelles (rad/s, repère caméra) entre images successives.
+
+    Renvoie (t_début, t_fin, ω) pour les paires réussies.
+    """
+    vr = VisualRotation()
+    feats = []
+    for img in images:
+        feats.append(vr.features(img))
+    t0s, t1s, ws = [], [], []
+    for i in range(0, len(images) - every, every):
+        j = i + every
+        R, n = vr.estimate(feats[i], feats[j], K)
+        dt = times[j] - times[i]
+        if R is None or dt <= 0 or n < 15:
+            continue
+        from visionaid.calib.rotation import so3_log
+
+        t0s.append(times[i])
+        t1s.append(times[j])
+        ws.append(-so3_log(R) / dt)
+    return np.array(t0s), np.array(t1s), np.array(ws).reshape(-1, 3)
+
+
+def _corr(a: np.ndarray, b: np.ndarray) -> float:
+    if len(a) < 5 or a.std() < 1e-9 or b.std() < 1e-9:
+        return -1.0
+    return float(np.corrcoef(a, b)[0, 1])
+
+
+def calibrate_imu_cam(
+    imu_t: np.ndarray,
+    imu_gyro: np.ndarray,
+    imu_accel: np.ndarray,
+    vis_t0: np.ndarray,
+    vis_t1: np.ndarray,
+    vis_w: np.ndarray,
+    R_prior: np.ndarray | None = None,
+    max_offset_s: float = 0.3,
+    min_rate: float = 0.15,
+) -> ImuCamCalibration:
+    """Calibration à partir de l'IMU et des vitesses visuelles (voir docstring du module)."""
+    notes: list[str] = []
+    R_prior = np.eye(3) if R_prior is None else np.asarray(R_prior, float)
+    gyro = np.asarray(imu_gyro, float)
+    # 1. biais sur les segments immobiles
+    sm = static_mask(imu_t, gyro, np.asarray(imu_accel, float))
+    static_s = float(sm.sum() / max(len(imu_t), 1) * (imu_t[-1] - imu_t[0])) if len(imu_t) else 0.0
+    if sm.sum() >= 10:
+        bias = gyro[sm].mean(0)
+    else:
+        bias = np.zeros(3)
+        notes.append("aucun segment immobile : biais supposé nul")
+    g = gyro - bias
+    vn = np.linalg.norm(vis_w, axis=1)
+
+    # 2. décalage temporel : corrélation des normes (grossier 5 ms puis fin 0,5 ms)
+    def corr_at(d: float) -> tuple[float, np.ndarray, np.ndarray]:
+        gm, keep = [], []
+        for k in range(len(vis_t0)):
+            m = mean_gyro(imu_t, g, vis_t0[k] + d, vis_t1[k] + d)
+            if m is not None:
+                gm.append(m)
+                keep.append(k)
+        if len(keep) < 5:
+            return -1.0, np.zeros((0, 3)), np.zeros(0, int)
+        gm = np.array(gm)
+        return _corr(np.linalg.norm(gm, axis=1), vn[keep]), gm, np.array(keep)
+
+    grid = np.arange(-max_offset_s, max_offset_s + 1e-9, 0.005)
+    scores = np.array([corr_at(d)[0] for d in grid])
+    d0 = float(grid[int(np.argmax(scores))])
+    fine = np.arange(d0 - 0.006, d0 + 0.006 + 1e-9, 0.0005)
+    fscores = np.array([corr_at(d)[0] for d in fine])
+    delta = float(fine[int(np.argmax(fscores))])
+    corr, gm, keep = corr_at(delta)
+    if corr < 0.5:
+        notes.append(f"corrélation faible ({corr:.2f}) : mouvement insuffisant ou image floue")
+    # 3. rotation et échelle sur les paires avec assez de mouvement
+    vw = vis_w[keep]
+    moving = (np.linalg.norm(vw, axis=1) > min_rate) & (np.linalg.norm(gm, axis=1) > 1e-6)
+    if moving.sum() < 5:
+        notes.append("trop peu de rotation pour estimer R_cam_imu : a priori conservé")
+        R = R_prior
+        scale = 1.0
+    else:
+        a, b = gm[moving], vw[moving]
+        R = kabsch(a, b)
+        ra = a @ R.T
+        scale = float(np.sum(ra * b) / np.sum(ra * ra))
+    # 4. unités
+    units_fix = 1.0
+    units_ok = abs(scale - 1.0) < 0.15
+    if not units_ok:
+        for cand in (math.pi / 180.0, 180.0 / math.pi):
+            if abs(scale / cand - 1.0) < 0.15:
+                units_fix = cand
+                notes.append(
+                    f"échelle du gyroscope {scale:.4f} ≈ {cand:.4f} : unités incorrectes "
+                    "(deg/s ↔ rad/s), correction proposée"
+                )
+                break
+        else:
+            notes.append(f"échelle du gyroscope inattendue : {scale:.3f}")
+    res = (
+        np.degrees(np.median(np.linalg.norm(vw - scale * gm @ R.T, axis=1)))
+        if len(vw)
+        else math.nan
+    )
+    return ImuCamCalibration(
+        R_cam_imu=R,
+        gyro_bias=bias * units_fix,
+        time_offset_s=delta,
+        gyro_scale=scale,
+        units_ok=units_ok,
+        units_fix=units_fix,
+        correlation=float(corr),
+        n_pairs=int(len(keep)),
+        residual_deg_s=float(res),
+        prior_angle_deg=rotation_angle_deg(R @ R_prior.T),
+        static_s=static_s,
+        notes=notes,
+    )
