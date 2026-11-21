@@ -22,6 +22,11 @@ class ImuBuffer:
 
     def __init__(self, calib: ImuCalib, keep_s: float = 10.0, extrapolate_s: float = 0.05) -> None:
         self.R = np.asarray(calib.R_cam_imu, float)
+        # accéléromètre : rotation et signe propres (Safari iOS : axes du gyroscope permutés,
+        # signe de l'accéléromètre inversé ; les deux sont mesurés par la calibration)
+        R_acc = getattr(calib, "R_cam_acc", None)
+        self.R_acc = np.asarray(R_acc, float) if R_acc is not None else self.R
+        self.acc_sign = float(getattr(calib, "accel_sign", 1.0))
         self.bias = np.asarray(calib.gyro_bias, float)
         self.delta = float(calib.time_offset_s)
         self.units = float(calib.units_fix)
@@ -40,7 +45,7 @@ class ImuBuffer:
             return
         t = np.asarray(batch.t, float) - self.delta
         w = (np.asarray(batch.gyro, float) * self.units - self.bias) @ self.R.T
-        a = np.asarray(batch.accel, float) @ self.R.T
+        a = self.acc_sign * np.asarray(batch.accel, float) @ self.R_acc.T
         if len(self.t):
             keep = t > self.t[-1]
             t, w, a = t[keep], w[keep], a[keep]

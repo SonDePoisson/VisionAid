@@ -35,13 +35,15 @@ def main(argv=None) -> dict:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--record", default=None, help="nom de la session à enregistrer")
     ap.add_argument("--target", default=None, help="prompt fixe (consigné dans la session)")
-    ap.add_argument("--height", type=float, default=None, help="hauteur caméra mesurée (m)")
+    ap.add_argument("--height", type=float, default=None, help="hauteur caméra mesurée (m ou cm)")
     ap.add_argument("--notes", default="", help="notes libres de la session")
     ap.add_argument("--duration", type=float, default=None, help="arrêt automatique (s)")
     args = ap.parse_args(argv)
     overrides = {}
     if args.height:
-        overrides["body.camera_height_m"] = args.height
+        from visionaid.utils.config import length_to_m
+
+        overrides["body.camera_height_m"] = length_to_m(args.height, "hauteur caméra")
     if args.target:  # vérifie dès maintenant que la cible est connue
         overrides["target.query"] = args.target
     cfg = load_config(overrides=overrides)

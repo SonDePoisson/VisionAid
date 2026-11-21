@@ -38,10 +38,18 @@ class ImuCamCalibration:
     prior_angle_deg: float  # écart à la rotation a priori
     static_s: float  # durée immobile utilisée pour le biais
     notes: list[str] = field(default_factory=list)
+    # accéléromètre : convention d'axes a priori, signe mesuré (Safari iOS l'inverse)
+    R_cam_acc: np.ndarray | None = None
+    accel_sign: float = 1.0
+    accel_tilt_deg: float = float("nan")  # écart « haut » mesuré / +y appareil (portrait)
 
     def to_yaml(self, path: str | Path, extra: dict | None = None) -> None:
         d = asdict(self)
         d["R_cam_imu"] = np.asarray(self.R_cam_imu).round(6).tolist()
+        Ra = self.R_cam_acc if self.R_cam_acc is not None else self.R_cam_imu
+        d["R_cam_acc"] = np.asarray(Ra).round(6).tolist()
+        d["accel_sign"] = float(self.accel_sign)
+        d["accel_tilt_deg"] = float(self.accel_tilt_deg)
         d["gyro_bias"] = [float(x) for x in self.gyro_bias]
         for k in ("time_offset_s", "gyro_scale", "units_fix", "correlation"):
             d[k] = float(d[k])
@@ -196,6 +204,23 @@ def calibrate_imu_cam(
         if len(vw)
         else math.nan
     )
+    # 5. accéléromètre : au repos, téléphone en portrait sur le torse, le haut est +y appareil
+    #    (norme W3C : la mesure « gravité incluse » pointe vers le haut). Safari iOS inverse le
+    #    signe : on le mesure sur les segments immobiles. Les axes, eux, suivent la norme : le
+    #    R_cam_imu calibré (qui absorbe la permutation d'axes du gyroscope) ne s'y applique pas.
+    accel_sign, tilt = 1.0, math.nan
+    acc = np.asarray(imu_accel, float)
+    if sm.sum() >= 10:
+        a_mean = acc[sm].mean(0)
+        accel_sign = 1.0 if a_mean[1] >= 0 else -1.0
+        up = accel_sign * a_mean / max(np.linalg.norm(a_mean), 1e-9)
+        tilt = float(np.degrees(np.arccos(np.clip(up[1], -1, 1))))
+        if accel_sign < 0:
+            notes.append("accéléromètre de signe inversé (Safari iOS) : corrigé (accel_sign = −1)")
+        if tilt > 35:
+            notes.append(f"téléphone incliné de {tilt:.0f}° au repos : signe à vérifier")
+    else:
+        notes.append("pas de segment immobile : signe de l'accéléromètre supposé conforme")
     return ImuCamCalibration(
         R_cam_imu=R,
         gyro_bias=bias * units_fix,
@@ -209,4 +234,7 @@ def calibrate_imu_cam(
         prior_angle_deg=rotation_angle_deg(R @ R_prior.T),
         static_s=static_s,
         notes=notes,
+        R_cam_acc=R_prior.copy(),
+        accel_sign=accel_sign,
+        accel_tilt_deg=tilt,
     )

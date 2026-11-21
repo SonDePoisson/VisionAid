@@ -85,6 +85,11 @@ def run(
     raw = raw or load_raw()
     if session:
         raw["_session"] = session
+        from visionaid.io.session import load_session
+
+        h = load_session(session).camera_height_m
+        if h:
+            raw["body"]["camera_height_m"] = h
         raw["_imu"] = True
     duration_s = float(duration_s or raw["realtime"]["duration_s"])
     # les nœuds chargent leurs modèles pendant `warmup_s` ; la lecture démarre à t0

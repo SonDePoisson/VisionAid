@@ -60,6 +60,8 @@ def run(
     dets_by_idx = {d.frame_idx: d for d in (dets_list or [])}
     depth_est = depth_est or video_depth_estimator(cfg, video)
     imu_source = None
+    if hasattr(src, "session") and src.session.camera_height_m:
+        cfg.body.camera_height_m = src.session.camera_height_m  # hauteur mesurée à l'enregistrement
     if hasattr(src, "session"):
         from visionaid.io.session import SessionImu
 

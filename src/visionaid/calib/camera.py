@@ -48,9 +48,16 @@ class CameraCalibration:
 
 
 def square_size_from_notes(notes: str) -> float | None:
-    """Lit « case = 24,5 mm » dans les notes d'une session ; renvoie des mètres."""
-    m = re.search(r"case\s*[=:]\s*([0-9]+(?:[.,][0-9]+)?)\s*mm", notes or "", re.IGNORECASE)
-    return float(m.group(1).replace(",", ".")) / 1000.0 if m else None
+    """Lit « case = 22 mm », « case =2.2cm » ou « case: 0,022 m » dans les notes ; renvoie des
+    mètres. Sans unité, la valeur est lue en mm si > 5, sinon en cm."""
+    m = re.search(
+        r"case\s*[=:]?\s*([0-9]+(?:[.,][0-9]+)?)\s*(mm|cm|m)?\b", notes or "", re.IGNORECASE
+    )
+    if not m:
+        return None
+    v = float(m.group(1).replace(",", "."))
+    unit = (m.group(2) or ("mm" if v > 5 else "cm")).lower()
+    return v * {"mm": 1e-3, "cm": 1e-2, "m": 1.0}[unit]
 
 
 def sharpness(gray: np.ndarray) -> float:

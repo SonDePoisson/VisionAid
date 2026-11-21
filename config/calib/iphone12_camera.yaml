@@ -1,0 +1,37 @@
+K:
+- - 482.1181893014665
+  - 0.0
+  - 245.07959841979945
+- - 0.0
+  - 484.0154940737352
+  - 308.6983885561669
+- - 0.0
+  - 0.0
+  - 1.0
+dist:
+- 0.17714067625106153
+- -0.46959919695976055
+- -0.006043455985941593
+- 0.0021161870375816997
+- 0.48679958976538834
+width: 480
+height: 640
+rms_px: 0.06004360648975388
+n_views: 15
+hfov_long_side_deg: 66.94
+device: iphone12
+session: 20261121-135201_calib_camera
+ua: Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML,
+  like Gecko) Version/26.3 Mobile/15E148 Safari/604.1
+pattern:
+- 9
+- 6
+square_m: 0.022000000000000002
+hfov_config_deg: 69.0
+rejected:
+  /Users/sarahhusson/VisionAid/data/sessions/20261121-135201_calib_camera/calib/000159.jpg: damier
+    non trouvé
+  /Users/sarahhusson/VisionAid/data/sessions/20261121-135201_calib_camera/calib/000164.jpg: aberrante
+    (0.13 px)
+  /Users/sarahhusson/VisionAid/data/sessions/20261121-135201_calib_camera/calib/000173.jpg: aberrante
+    (0.14 px)

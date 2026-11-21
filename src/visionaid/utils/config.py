@@ -80,3 +80,25 @@ def resolve_path(p: str | Path) -> Path:
     """Chemin relatif à la racine du projet."""
     p = Path(p)
     return p if p.is_absolute() else ROOT / p
+
+
+def length_to_m(value, name: str = "longueur") -> float | None:
+    """Longueur saisie par l'utilisateur → mètres. Accepte m, cm ou mm sans unité explicite :
+    > 3 est lu en cm (« 150 » → 1,50 m), > 300 en mm. Les hauteurs humaines ne laissent pas
+    d'ambiguïté."""
+    if value is None:
+        return None
+    v = float(value)
+    if v > 300:
+        out = v / 1000.0
+    elif v > 3:
+        out = v / 100.0
+    else:
+        out = v
+    if out != v:
+        import logging
+
+        logging.getLogger("visionaid.config").warning(
+            "%s = %g interprétée comme %g m (unité déduite)", name, v, out
+        )
+    return out

@@ -53,6 +53,13 @@ class Session:
     def calib_files(self) -> list[Path]:
         return sorted((self.dir / "calib").glob("*.jpg"))
 
+    @property
+    def camera_height_m(self) -> float | None:
+        """Hauteur caméra déclarée à l'enregistrement, en mètres (cm acceptés)."""
+        from visionaid.utils.config import length_to_m
+
+        return length_to_m(self.meta.get("camera_height_m"), "hauteur caméra de la session")
+
     def clock_offset(self) -> ClockSync | None:
         """Meilleure estimation d'horloge de la session (incertitude minimale)."""
         if not self.clock:

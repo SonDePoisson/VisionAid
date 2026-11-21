@@ -169,3 +169,43 @@ def test_device_calibration_loading(tmp_path):
     )
     imu1 = load_imu_calib(cfg)
     assert imu1.source == "calibration" and imu1.time_offset_s == 0.03
+
+
+def test_units_in_cm_or_mm():
+    from visionaid.utils.config import length_to_m
+
+    assert square_size_from_notes("Case =2.2cm") == pytest.approx(0.022)
+    assert square_size_from_notes("case=22mm") == pytest.approx(0.022)
+    assert square_size_from_notes("case: 0,022 m") == pytest.approx(0.022)
+    assert square_size_from_notes("case = 22") == pytest.approx(0.022)  # sans unité : mm
+    assert square_size_from_notes("case 2,2") == pytest.approx(0.022)  # petit nombre : cm
+    assert length_to_m(150) == pytest.approx(1.5)
+    assert length_to_m(1.5) == pytest.approx(1.5)
+    assert length_to_m(1500) == pytest.approx(1.5)
+    assert length_to_m(None) is None
+
+
+def test_safari_ios_axes_and_accel_sign():
+    """Safari iOS : gyroscope [alpha, beta, gamma] = axes (x, y, z) au lieu de (z, x, y), et
+    accéléromètre de signe inversé. La calibration absorbe la permutation dans R_cam_imu et
+    mesure le signe de l'accéléromètre, appliqués séparément par la VIO."""
+    from visionaid.calib.device import ImuCalib
+    from visionaid.pose.imu import ImuBuffer
+
+    t_imu, gyro, acc, t0, t1, w_vis, R_true, R_prior = _synthetic(bias=(0, 0, 0))
+    # la page envoie [beta, gamma, alpha] ; sous iOS ce sont les axes (y, z, x)
+    gyro_page = gyro[:, [1, 2, 0]]
+    acc_ios = -acc  # gravité de signe inversé
+    cal = calibrate_imu_cam(t_imu, gyro_page, acc_ios, t0, t1, w_vis, R_prior)
+    assert cal.units_ok and cal.correlation > 0.9
+    assert 100 < cal.prior_angle_deg < 140  # permutation cyclique ≈ 120°
+    assert cal.accel_sign == -1.0 and any("signe inversé" in n for n in cal.notes)
+    # appliquée : gyroscope ET gravité justes dans le repère caméra
+    ic = ImuCalib(cal.R_cam_imu, cal.gyro_bias, 0.0, 1.0, "test", cal.R_cam_acc, cal.accel_sign)
+    from visionaid.bus.messages import ImuBatch
+
+    b = ImuBuffer(ic)
+    b.add(ImuBatch(t_imu[:50], gyro_page[:50], acc_ios[:50]))
+    a_mean, _ = b.accel_mean(t_imu[0], t_imu[49])
+    up_cam = R_prior @ np.array([0.0, 1.0, 0.0])  # +y appareil dans le repère caméra
+    assert np.degrees(np.arccos(a_mean @ up_cam / np.linalg.norm(a_mean))) < 3

@@ -99,6 +99,8 @@ def calibrate_imu_session(cfg, session_dir, out: Path | None = None, every: int 
         "n_pairs": cal.n_pairs,
         "residual_deg_s": round(cal.residual_deg_s, 2),
         "static_s": round(cal.static_s, 1),
+        "accel_sign": cal.accel_sign,
+        "accel_tilt_deg": round(cal.accel_tilt_deg, 1),
         "notes": cal.notes,
     }
 

@@ -1,0 +1,41 @@
+R_cam_imu:
+- - 0.001037
+  - 0.003091
+  - 0.999995
+- - -0.999546
+  - -0.030104
+  - 0.00113
+- - 0.030108
+  - -0.999542
+  - 0.003058
+gyro_bias:
+- -0.001158638617290291
+- -0.0014036428674775977
+- 0.0017963233056085036
+time_offset_s: -0.03699999999999975
+gyro_scale: 1.0471976587679275
+units_ok: true
+units_fix: 1.0
+correlation: 0.9962469383626513
+n_pairs: 1112
+residual_deg_s: 1.3257951424085035
+prior_angle_deg: 119.07527279396047
+static_s: 12.470870863553905
+notes:
+- 'accéléromètre de signe inversé (Safari iOS) : corrigé (accel_sign = −1)'
+R_cam_acc:
+- - 1.0
+  - 0.0
+  - 0.0
+- - 0.0
+  - -1.0
+  - 0.0
+- - 0.0
+  - 0.0
+  - -1.0
+accel_sign: -1.0
+accel_tilt_deg: 8.949768352029318
+device: iphone12
+session: 20261121-135656_calib_imu
+ua: Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML,
+  like Gecko) Version/26.3 Mobile/15E148 Safari/604.1

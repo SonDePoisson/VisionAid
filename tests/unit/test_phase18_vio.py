@@ -254,6 +254,26 @@ def test_depth_scale_converges_to_camera_height():
 def test_depth_scale_perfectly_flat_floor():
     """Cas limite : sol sans bruit (toutes les hauteurs dans un seul intervalle d'histogramme)."""
     d, Kf, up = floor_depth(box=False)
-    sc = DepthScaleCorrector(camera_height_m=1.2, ema=1.0)
+    sc = DepthScaleCorrector(camera_height_m=1.2, ema=1.0, n_init=1)
     sc.update(d, Kf, up)
     assert sc.n_updates == 1 and sc.scale == pytest.approx(1.2 / 1.3, rel=0.01)
+
+
+def test_depth_scale_ignores_dominant_table():
+    """Essai réel : la caméra vise une table qui couvre le bas de l'image ; le sol, plus bas, n'est
+    qu'un mode secondaire. Le sol (et non la table) doit donner l'échelle, et une mesure isolée
+    aberrante ne doit pas faire sauter le facteur."""
+    d, Kf, up = floor_depth(box=False, pitch_deg=30.0, cam_h=1.5)
+    h = d.shape[0]
+    table = d.copy()
+    # dessus de table 0,75 m sous la caméra sur 70 % du bas de l'image
+    v, _u = np.mgrid[0:h, 0 : d.shape[1]]
+    y = (v - Kf[1, 2]) / Kf[1, 1]
+    p = np.radians(30.0)
+    den = np.cos(p) * y + np.sin(p)
+    tab = np.where(den > 1e-3, 0.75 / np.maximum(den, 1e-3), 8.0)
+    table[int(h * 0.6) :, :] = tab[int(h * 0.6) :, :]
+    sc = DepthScaleCorrector(camera_height_m=1.5, ema=0.2)
+    for _ in range(10):
+        sc.update(table, Kf, up)
+    assert sc.scale == pytest.approx(1.0, abs=0.05)

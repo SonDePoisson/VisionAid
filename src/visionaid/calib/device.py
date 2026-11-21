@@ -68,6 +68,8 @@ class ImuCalib:
     time_offset_s: float
     units_fix: float
     source: str  # « calibration » ou « a priori »
+    R_cam_acc: np.ndarray | None = None  # None : même rotation que le gyroscope
+    accel_sign: float = 1.0
 
 
 def load_imu_calib(cfg) -> ImuCalib:
@@ -86,4 +88,6 @@ def load_imu_calib(cfg) -> ImuCalib:
         float(d.get("time_offset_s", 0.0)),
         units,
         "calibration",
+        np.asarray(d["R_cam_acc"], float) if "R_cam_acc" in d else None,
+        float(d.get("accel_sign", 1.0)),
     )

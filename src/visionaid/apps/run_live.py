@@ -186,6 +186,11 @@ def run(
     if session:
         source = "session"
         raw["_session"] = session
+        from visionaid.io.session import load_session
+
+        h = load_session(session).camera_height_m
+        if h:
+            raw["body"]["camera_height_m"] = h
         raw["_live_clock"] = False
         raw["_t0_wall"] = time.time() + warmup_s
     else:
@@ -293,7 +298,9 @@ def main(argv=None) -> dict:
     if args.target:
         ov["target.query"] = args.target
     if args.height:
-        ov["body.camera_height_m"] = args.height
+        from visionaid.utils.config import length_to_m
+
+        ov["body.camera_height_m"] = length_to_m(args.height, "hauteur caméra")
     raw = load_raw(overrides=ov or None)
     fake = args.fake_phone is not None
     s = run(

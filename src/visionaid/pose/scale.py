@@ -28,6 +28,8 @@ class DepthScaleCorrector:
         bottom_fraction: float = 0.5,
         pixel_step: int = 6,
         min_height_m: float = 0.5,
+        n_init: int = 5,
+        max_jump: float = 1.3,
     ) -> None:
         self.h_ref = float(camera_height_m)
         self.ema = float(ema)
@@ -39,6 +41,10 @@ class DepthScaleCorrector:
         self.min_h = float(min_height_m)
         self.log_s = 0.0
         self.n_updates = 0
+        self.n_rejected = 0
+        self.n_init = int(n_init)
+        self.max_jump = float(max_jump)
+        self._init: list[float] = []
         self.history: list[float] = []
 
     @property
@@ -65,7 +71,12 @@ class DepthScaleCorrector:
             return None
         hist, edges = np.histogram(below, edges)
         hs = hist + np.r_[hist[1:], 0] + np.r_[0, hist[:-1]]  # lissage sur 3 bins
-        dense = np.nonzero((hs >= 0.3 * hs.max()) & (hist > 0))[0]  # bins lissés ET non vides
+        # seuil ABSOLU (et non relatif au mode principal) : quand la caméra vise une table, le
+        # dessus de table domine et le sol, plus bas, n'est qu'un mode secondaire (essai réel)
+        need = max(self.min_points / 3.0, 0.04 * len(below))
+        dense = np.nonzero((hs >= need) & (hist > 0))[0]
+        if len(dense) == 0:
+            return None
         k = int(dense.max())
         lo, hi = edges[max(k - 1, 0)], edges[min(k + 2, len(edges) - 1)]
         sel = below[(below >= lo) & (below <= hi)]
@@ -81,7 +92,17 @@ class DepthScaleCorrector:
         if h is None or h <= 0:
             return self.scale
         s_meas = float(np.clip(self.h_ref / h, self.lo, self.hi))
-        a = self.ema if self.n_updates > 0 else 1.0
+        if self.n_updates == 0:  # démarrage robuste : médiane des premières mesures
+            self._init.append(s_meas)
+            if len(self._init) < self.n_init:
+                return self.scale
+            s_meas = float(np.median(self._init))
+            a = 1.0
+        else:
+            if abs(math.log(s_meas) - self.log_s) > math.log(self.max_jump):
+                self.n_rejected += 1  # saut d'échelle invraisemblable : autre surface que le sol
+                return self.scale
+            a = self.ema
         self.log_s = (1 - a) * self.log_s + a * math.log(s_meas)
         self.log_s = float(np.clip(self.log_s, math.log(self.lo), math.log(self.hi)))
         self.n_updates += 1
