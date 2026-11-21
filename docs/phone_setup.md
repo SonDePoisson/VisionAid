@@ -39,3 +39,6 @@ L'écran reste allumé grâce au verrou d'écran (Safari ≥ 16.4). Avec une ver
 | La page ne charge pas | Wi-Fi isolant, pare-feu macOS | partage de connexion ; autoriser Python dans Réglages Système → Réseau → Pare-feu |
 | IMU « absente » | permission des mouvements refusée | Réglages → Safari → Mouvement et orientation, puis recharger |
 | Images figées | page masquée ou écran verrouillé | garder Safari au premier plan |
+| « Cette connexion n'est pas privée » alors que le certificat est installé | le Mac a changé de réseau (Wi-Fi ↔ partage de connexion) et le certificat ne couvre pas la nouvelle adresse | le serveur le réémet tout seul en quelques secondes (message « Adresse réseau changée » dans le terminal) : recharger la page avec la **nouvelle** adresse affichée |
+| « Connexion au serveur impossible » en partage de connexion | adresse du Wi-Fi utilisée alors que le Mac est sur le partage de connexion (adresse en 172.20.10.x), ou Chrome sans accès au réseau local | utiliser l'adresse en `172.20.10.x` affichée par le terminal ; pour Chrome : Réglages → Chrome → Réseau local activé |
+| Chrome sur iPhone | Chrome utilise les certificats d'iOS | installer le certificat **avec Safari** (étape 3), puis Chrome fonctionne aussi |

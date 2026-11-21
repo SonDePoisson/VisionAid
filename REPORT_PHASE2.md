@@ -22,7 +22,7 @@ Plan exécuté : `PLAN_PHASE2.md`, phases 14 à 22. Le détail est dans `PROGRES
    - latence capture → chemin **p50 336 ms, p95 415 ms**, objectif 700 ms ;
    - chemin invalidé pendant une coupure, puis reprise automatique.
 9. **Optimisation testée et écartée.** Une profondeur à 364 px réduit la latence p95 à 275 ms, mais dégrade nettement le guidage (7° → 46°). On garde 518 px.
-10. **Tests** : 176 rapides et 30 lents (ou `data`). Les tests sur données réelles du téléphone sont `skip` tant que les enregistrements manquent. Aucun test supprimé, aucun seuil affaibli.
+10. **Tests** : `night_run.sh` vert. 177 tests rapides passent ; parmi les 30 lents ou `data`, 24 passent et 6 sont `skip` (données du téléphone absentes). Offline, temps réel et faux téléphone OK. Les tests sur données réelles du téléphone sont `skip` tant que les enregistrements manquent. Aucun test supprimé, aucun seuil affaibli.
 
 ## Ce qui attend l'équipe (checkpoint)
 
