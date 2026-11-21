@@ -186,8 +186,9 @@ audio:
   # sons préparés par `python -m visionaid.audio.prepare` (volume perçu égalisé à −20 LUFS)
   sounds_dir: assets/sounds/processed
   sounds:
-    guide: {file: direction_2.wav, gain_db: 0}
-    arrived: {file: vous_etes_arrive.wav, gain_db: 0}
+    guide: {file: direction_2.wav, gain_db: 0}     # objet trouvé : guidage vers lui
+    search: {file: direction_1.wav, gain_db: 0}    # objet pas encore trouvé : exploration
+    arrived: {file: arrivee_arpege.wav, gain_db: 0} # arpège do-mi-sol-do (vous_etes_arrive.wav possible)
     alert: {file: zone_spaciale_grave.wav, gain_db: 0}
   guide_notes: 1              # notes de direction_2 jouées à chaque répétition (5 = motif complet)
   guide_note_s: 0.375         # intervalle entre les notes de direction_2
@@ -196,7 +197,8 @@ audio:
   guide_interval_far_s: 1.1   # espacement entre deux notes à guide_far_m et au-delà
   guide_interval_near_s: 0.65 # espacement tout près : diminue linéairement entre les deux
   guide_far_m: 5.0
-  search_gain_db: -6          # recherche : même note, plus douce, qui balaie
+  search_gain_db: -6          # recherche : son direction_1, plus doux, qui balaie…
+  search_interval_s: 1.8      # …et plus lent que le guidage (une fois par 1,8 s)
   alert_period_s: 2.3         # obstacle ou repérage perdu : un son toutes les 2,3 s
   arrived_cooldown_s: 5.0     # le son d'arrivée ne se rejoue pas avant ce délai
   master_gain_db: 0

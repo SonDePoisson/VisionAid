@@ -67,7 +67,7 @@ def test_welcome_audio_sounds_served_and_sound_messages(cfg):
     assert a["sounds"]["guide"].endswith("direction_2.wav")
     assert a["panning"] == "HRTF" and a["guide_notes"] == 1
     assert a["fade_out_s"] == pytest.approx(cfg.audio.guide_fade_out_s)
-    for k in ("guide", "arrived", "alert"):
+    for k in ("guide", "search", "arrived", "alert"):
         status, size = got[f"http_{k}"]
         assert status == 200 and size > 10_000
     s = got["sound"]

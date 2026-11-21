@@ -128,7 +128,7 @@ def test_processed_sounds_present_and_normalized(cfg):
 
     d = resolve_path(cfg.audio.sounds_dir)
     rep = json.loads((d / "levels.json").read_text())
-    for s in ("guide", "arrived", "alert"):
+    for s in ("guide", "search", "arrived", "alert"):
         f = getattr(cfg.audio.sounds, s).file
         assert (d / f).exists()
         assert rep["sounds"][f]["after"]["lufs_m"] == pytest.approx(-20.0, abs=0.5)
@@ -146,3 +146,38 @@ def test_prepare_trims_and_normalizes():
     assert len(y) < 0.6 * fs  # silences coupés
     assert momentary_loudness(y, fs) == pytest.approx(-20.0, abs=0.3)
     assert abs(y[0]) < 1e-3 and abs(y[-1]) < 1e-3  # fondus
+
+
+def test_search_sound_differs_from_guide(cfg):
+    """Exploration (objet pas trouvé) : autre son et autre rythme que le guidage."""
+    assert cfg.audio.sounds.search.file != cfg.audio.sounds.guide.file
+    d = SoundDirector(cfg.audio)
+    s = d.command(_cue(0.0, "SEARCHING"))
+    g = d.command(_cue(0.1, "NAVIGATING", dist=10.0))
+    assert s.mode == "search" and g.mode == "guide"
+    assert s.interval_s == pytest.approx(cfg.audio.search_interval_s)
+    assert s.interval_s > g.interval_s  # exploration plus lente que le guidage, même au loin
+    r = AudioRenderer(cfg.audio)
+    assert len(r.search) != len(r.guide) or not np.allclose(r.search, r.guide)
+    fs = r.fs
+    # 4 s de recherche puis 4 s de guidage : notes de la recherche = son `search`
+    cues = [_cue(t / 10, "SEARCHING") for t in range(40)]
+    cues += [_cue(4 + t / 10, "NAVIGATING", dist=2.0) for t in range(40)]
+    st = r.render(cues, 0.0, 8.0)
+    env = np.abs(st).sum(1)
+    onsets_s = np.flatnonzero(env[: 4 * fs] > 1e-4)
+    assert onsets_s.size and onsets_s[0] < 0.05 * fs
+    assert np.abs(st[4 * fs : 4 * fs + int(0.1 * fs)]).max() > 0  # guidage démarre tout de suite
+
+
+def test_arrival_sound_is_old_chime(cfg):
+    """Son d'arrivée : l'arpège do-mi-sol-do d'avant les sons enregistrés (0,6 s)."""
+    import soundfile as sf
+
+    assert cfg.audio.sounds.arrived.file == "arrivee_arpege.wav"
+    x, fs = sf.read(str(resolve_path(cfg.audio.sounds_dir) / "arrivee_arpege.wav"))
+    assert abs(len(x) / fs - 0.6) < 0.02
+    q = len(x) // 4
+    peaks = [np.fft.rfftfreq(q, 1 / fs)[np.abs(np.fft.rfft(x[k * q : (k + 1) * q])).argmax()]
+             for k in range(4)]
+    assert np.allclose(peaks, [523.25, 659.25, 783.99, 1046.5], atol=10)

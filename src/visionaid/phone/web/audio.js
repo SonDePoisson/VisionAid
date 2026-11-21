@@ -1,6 +1,7 @@
 // VisionAId — rendu sonore du guidage sur le téléphone (Web Audio, spatialisation HRTF).
 // Le PC décide quoi jouer (messages « sound », voir docs/protocol.md) ; ce fichier ne fait que
-// l'exécuter : note du guide répétée et spatialisée, alerte grave, son d'arrivée.
+// l'exécuter : son d'exploration (objet pas encore trouvé), note du guide répétée et
+// spatialisée (objet trouvé), alerte grave, son d'arrivée.
 // Même rendu que le banc d'écoute ; logique commune côté PC dans visionaid/audio/director.py.
 "use strict";
 
@@ -161,6 +162,11 @@ class GuideAudio {
     this._play("guide", this.lp, when, extraDb, dur, [a.fade_in_s, a.fade_out_s]);
   }
 
+  // exploration : le son « search » entier (timbre distinct du guide), courts fondus
+  _playSearch(when, extraDb) {
+    this._play("search", this.lp, when, extraDb, Infinity, [0.01, 0.15]);
+  }
+
   _tick() {
     if (!this.ready || !this.active) return;
     const now = this.ctx.currentTime;
@@ -169,9 +175,12 @@ class GuideAudio {
     if (this.lastMsg > 0 && performance.now() - this.lastMsg > this.cfg.watchdog_s * 1000) mode = "alert";
     const pulsing = (m) => m === "guide" || m === "search";
     if (pulsing(mode)) {
-      if (!pulsing(this.prevMode) || this.next < now) this.next = now + 0.02;
+      // nouveau rythme dès le passage recherche ↔ guidage
+      if (!pulsing(this.prevMode) || mode !== this.prevMode || this.next < now) this.next = now + 0.02;
+      const search = mode === "search" && this.buffers.search;
       while (this.next < now + 0.1) {
-        this._playGuide(this.next, this.cmd.gain_db || 0);
+        if (search) this._playSearch(this.next, this.cmd.gain_db || 0);
+        else this._playGuide(this.next, this.cmd.gain_db || 0);
         this.next += Math.max(0.2, this.cmd.interval || 1);
       }
     }

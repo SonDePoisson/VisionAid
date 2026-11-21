@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 
 from visionaid.audio.binaural import smooth_azimuth, spatialize
-from visionaid.audio.director import ALERT, GUIDE, SEARCH, SoundDirector
+from visionaid.audio.director import ALERT, GUIDE, SEARCH, SOUND_KEYS, SoundDirector
 from visionaid.bus.messages import GuidanceCue, SoundCommand
 from visionaid.utils.config import resolve_path
 from visionaid.utils.logging import get_logger
@@ -99,7 +99,7 @@ class AudioRenderer:
         d = resolve_path(a.sounds_dir)
         self.sounds = {
             k: load_sound(d / getattr(snd, k).file, self.fs) * db_lin(getattr(snd, k).gain_db)
-            for k in ("guide", "arrived", "alert")
+            for k in SOUND_KEYS
         }
         self.guide = guide_note(
             self.sounds["guide"],
@@ -109,6 +109,8 @@ class AudioRenderer:
             float(a.guide_fade_in_s),
             float(a.guide_fade_out_s),
         )
+        # exploration : le son `search` entier, avec de courts fondus (timbre distinct du guide)
+        self.search = guide_note(self.sounds["search"], self.fs, 5, 1.0, 0.01, 0.15)
 
     def director(self) -> SoundDirector:
         return SoundDirector(self.cfg)
@@ -152,10 +154,13 @@ class AudioRenderer:
                     next_note = ta
                 while next_note < tb:
                     i = int(round((next_note - t0) * fs))
-                    self._add(spatial, i, self.guide * db_lin(c.gain_db))
+                    note = self.search if c.mode == SEARCH else self.guide
+                    self._add(spatial, i, note * db_lin(c.gain_db))
                     next_note += c.interval_s
             else:
                 next_note = None
+            if k + 1 < len(cmds) and (cmds[k + 1].mode == SEARCH) != (c.mode == SEARCH):
+                next_note = None  # passage recherche ↔ guidage : nouveau rythme immédiatement
             if c.mode == ALERT:
                 if next_alert is None:
                     next_alert = ta

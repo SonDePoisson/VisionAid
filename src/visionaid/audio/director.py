@@ -3,7 +3,8 @@
 Toute la logique sonore est ici, en un seul endroit : le téléphone (Web Audio) et le rendu hors
 ligne (WAV) ne font qu'exécuter les `SoundCommand` produites.
 
-- recherche → note du guide plus douce, qui balaie ;
+- recherche (objet pas encore trouvé) → son distinct (`search`), plus doux et plus lent, qui
+  balaie ;
 - navigation, approche → note du guide spatialisée vers l'objectif, espacement réduit en
   approchant ;
 - obstacle, repérage perdu → son grave « arrête-toi », non spatialisé, répété ;
@@ -32,6 +33,7 @@ STATE_MODE = {
     "TRACKING_LOST": ALERT,
 }
 LOWPASS_OFF_HZ = 20000.0
+SOUND_KEYS = ("guide", "search", "arrived", "alert")  # sons de `audio.sounds`
 
 
 def expand_azimuth(az, k: float):
@@ -54,6 +56,7 @@ class SoundDirector:
         self.near_s = float(a.guide_interval_near_s)
         self.far_m = float(a.guide_far_m)
         self.search_db = float(a.search_gain_db)
+        self.search_s = float(getattr(a, "search_interval_s", self.far_s) or self.far_s)
         self.k = float(a.azimuth_expansion)
         self.back_hz = float(a.back_lowpass_hz)
         self.back_db = float(a.back_gain_db)
@@ -91,7 +94,7 @@ class SoundDirector:
             azimuth=az,
             azimuth_render=azr,
             distance=float(cue.distance),
-            interval_s=self.far_s if mode == SEARCH else self.interval(cue.distance),
+            interval_s=self.search_s if mode == SEARCH else self.interval(cue.distance),
             gain_db=self.search_db if mode == SEARCH else 0.0,
             lowpass_hz=float(lp),
             back_gain_db=self.back_db * b,

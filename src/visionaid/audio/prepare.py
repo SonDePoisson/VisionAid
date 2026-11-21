@@ -29,6 +29,20 @@ SOUNDS = {
 }
 
 
+def arrival_chime(fs: int) -> np.ndarray:
+    """Ancien son d'arrivée (avant les sons enregistrés) : arpège ascendant do-mi-sol-do, 0,6 s."""
+    d = 0.15
+    t = np.arange(int(d * fs)) / fs
+    env = np.sin(np.pi * t / d) ** 2
+    return np.concatenate(
+        [env * np.sin(2 * np.pi * f * t) for f in (523.25, 659.25, 783.99, 1046.5)]
+    )
+
+
+# sons synthétisés (pas de fichier d'origine), préparés comme les autres
+SYNTH = {"arrivee_arpege.wav": (arrival_chime, 44100)}
+
+
 def _biquad_shelf(fs: float) -> tuple[np.ndarray, np.ndarray]:
     """Étage 1 de la pondération K (plateau aigu +4 dB), BS.1770, pour toute fréquence."""
     G, Q, fc = 3.999843853973347, 0.7071752369554196, 1681.974450955533
@@ -146,12 +160,17 @@ def main(argv=None) -> dict:
     src, dst = resolve_path(a.src), resolve_path(a.dst)
     dst.mkdir(parents=True, exist_ok=True)
     report = {"target_lufs": a.target_lufs, "peak_dbfs": a.peak_dbfs, "sounds": {}}
-    for name, opt in SOUNDS.items():
-        p = Path(src) / name
-        if not p.exists():
+    items = [(n, o["mono"], Path(src) / n) for n, o in SOUNDS.items()]
+    items += [(n, True, gen) for n, gen in SYNTH.items()]
+    for name, mono, srcp in items:
+        if isinstance(srcp, tuple):
+            fs = srcp[1]
+            x = srcp[0](fs)[:, None]
+        elif srcp.exists():
+            x, fs = sf.read(str(srcp), always_2d=True)
+        else:
             continue
-        x, fs = sf.read(str(p), always_2d=True)
-        y, info = prepare_one(x, fs, opt["mono"], a.target_lufs, a.peak_dbfs)
+        y, info = prepare_one(x, fs, mono, a.target_lufs, a.peak_dbfs)
         sf.write(str(dst / name), y, fs, subtype="PCM_16")
         report["sounds"][name] = info
         print(

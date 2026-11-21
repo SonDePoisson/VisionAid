@@ -21,6 +21,7 @@ import cv2
 import numpy as np
 from aiohttp import WSMsgType, web
 
+from visionaid.audio.director import SOUND_KEYS
 from visionaid.bus.messages import ClockSync, Frame, ImuBatch
 from visionaid.calib.device import phone_intrinsics
 from visionaid.phone.certs import CertPaths, ensure_certs, server_ssl_context
@@ -327,8 +328,8 @@ class PhoneServer:
             return None
         snd = a.sounds
         return {
-            "sounds": {k: f"/sounds/{getattr(snd, k).file}" for k in ("guide", "arrived", "alert")},
-            "gains_db": {k: float(getattr(snd, k).gain_db) for k in ("guide", "arrived", "alert")},
+            "sounds": {k: f"/sounds/{getattr(snd, k).file}" for k in SOUND_KEYS if hasattr(snd, k)},
+            "gains_db": {k: float(getattr(snd, k).gain_db) for k in SOUND_KEYS if hasattr(snd, k)},
             "guide_notes": int(a.guide_notes),
             "guide_note_s": float(a.guide_note_s),
             "fade_in_s": float(a.guide_fade_in_s),
