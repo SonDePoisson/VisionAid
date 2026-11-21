@@ -91,7 +91,7 @@ vo:
   ratio_test: 0.75
   min_inliers: 40
   reproj_err_px: 2.0
-  ransac_iters: 200
+  ransac_iters: 300
   kf_trans_m: 0.15
   kf_rot_deg: 10.0
   kf_min_inliers: 120
@@ -100,10 +100,11 @@ vo:
   max_jump_m: 0.5
   max_jump_deg: 30.0
   min_texture_keypoints: 30
+  symmetric_refine: true
 
 floor:
   bottom_fraction: 0.5
-  ransac_iters: 200
+  ransac_iters: 300
   inlier_dist_m: 0.03
   min_inliers: 300
   update_alpha: 0.05

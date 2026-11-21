@@ -43,6 +43,7 @@ markers = [
     "integration: pipeline complet",
 ]
 addopts = "-ra -p no:dash"
+filterwarnings = ["ignore:.*encountered in matmul:RuntimeWarning", "ignore::FutureWarning", "ignore::DeprecationWarning"]
 
 [tool.ruff]
 line-length = 100
