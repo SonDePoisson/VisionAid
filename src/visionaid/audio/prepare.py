@@ -39,8 +39,31 @@ def arrival_chime(fs: int) -> np.ndarray:
     )
 
 
+def exploration_soft(fs: int) -> np.ndarray:
+    """Son d'exploration doux : deux notes sol-ré (392 → 587 Hz) façon carillon feutré.
+
+    Attaque lente (70 ms, pas de « clic » ni de percussion), extinction exponentielle, timbre
+    presque pur (harmoniques 2 et 3 très faibles, juste assez pour la spatialisation HRTF).
+    """
+    out = []
+    for f, d in ((392.0, 0.55), (587.33, 0.75)):
+        t = np.arange(int(d * fs)) / fs
+        env = (1 - np.exp(-t / 0.025)) * np.exp(-t / (d / 3.5))
+        env *= np.clip((d - t) / 0.08, 0, 1)  # fin sans coupure
+        tone = (
+            np.sin(2 * np.pi * f * t)
+            + 0.12 * np.sin(2 * np.pi * 2 * f * t)
+            + 0.04 * np.sin(2 * np.pi * 3 * f * t)
+        )
+        out.append(env * tone)
+    return np.concatenate(out)
+
+
 # sons synthétisés (pas de fichier d'origine), préparés comme les autres
-SYNTH = {"arrivee_arpege.wav": (arrival_chime, 44100)}
+SYNTH = {
+    "arrivee_arpege.wav": (arrival_chime, 44100),
+    "exploration_douce.wav": (exploration_soft, 44100),
+}
 
 
 def _biquad_shelf(fs: float) -> tuple[np.ndarray, np.ndarray]:

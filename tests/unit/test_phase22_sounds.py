@@ -181,3 +181,16 @@ def test_arrival_sound_is_old_chime(cfg):
     peaks = [np.fft.rfftfreq(q, 1 / fs)[np.abs(np.fft.rfft(x[k * q : (k + 1) * q])).argmax()]
              for k in range(4)]
     assert np.allclose(peaks, [523.25, 659.25, 783.99, 1046.5], atol=10)
+
+
+def test_exploration_sound_is_soft(cfg):
+    """Exploration : deux notes douces sol-ré, attaque lente (pas de percussion)."""
+    import soundfile as sf
+
+    assert cfg.audio.sounds.search.file == "exploration_douce.wav"
+    x, fs = sf.read(str(resolve_path(cfg.audio.sounds_dir) / "exploration_douce.wav"))
+    peak = np.abs(x).max()
+    assert np.abs(x[: int(0.01 * fs)]).max() < 0.5 * peak  # pas de clic au début
+    h = int(0.55 * fs)
+    f = [np.fft.rfftfreq(len(y), 1 / fs)[np.abs(np.fft.rfft(y)).argmax()] for y in (x[:h], x[h:])]
+    assert np.allclose(f, [392.0, 587.33], atol=5)
