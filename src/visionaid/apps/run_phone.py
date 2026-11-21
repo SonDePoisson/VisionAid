@@ -53,7 +53,7 @@ def main(argv=None) -> dict:
         print("  ", u)
     print_qr(urls[0])
     if srv.http_port > 0:
-        host = urls[0].split("//")[1].split(":")[0]
+        host = urls[0].split("//")[1].rsplit(":", 1)[0]
         print(
             f"Certificat à installer une fois : http://{host}:{srv.http_port}/  (docs/phone_setup.md)"
         )

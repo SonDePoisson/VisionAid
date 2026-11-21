@@ -90,7 +90,9 @@ class PhoneServer:
     ) -> None:
         self.cfg = cfg
         pc = cfg.phone
-        self.host = host if host is not None else str(pc.host)
+        h = host if host is not None else pc.host
+        # « auto » / vide : toutes les interfaces en IPv4 ET IPv6 (réseaux IPv6 seul)
+        self.host = None if h in (None, "", "auto", "0.0.0.0", "::") else str(h)
         self.https_port = int(https_port if https_port is not None else pc.https_port)
         self.http_port = int(http_port if http_port is not None else pc.http_port)
         self.on_frame = on_frame
@@ -249,7 +251,8 @@ class PhoneServer:
             "(Réglages → Général → VPN et gestion de l'appareil).</p>"
             "<p>2. Activer la confiance totale : Réglages → Général → Informations → "
             "Réglages des certificats.</p>"
-            f"<p>3. Ouvrir <b>https://{request.host.split(':')[0]}:{self.https_port}/</b>.</p>"
+            f"<p>3. Ouvrir <b>https://{_url_host(request.url.host or 'localhost')}:"
+            f"{self.https_port}/</b>.</p>"
         )
         return web.Response(text=html, content_type="text/html")
 
@@ -434,11 +437,12 @@ class PhoneServer:
         return cache[(w, h)]
 
     def urls(self) -> list[str]:
-        """URLs HTTPS à ouvrir sur le téléphone (une par adresse locale)."""
-        from visionaid.phone.certs import host_names, local_ips
+        """URLs HTTPS à ouvrir sur le téléphone : nom Bonjour (.local) d'abord, puis adresses."""
+        from visionaid.phone.certs import host_names, reachable_ips, url_host
 
-        ips = [i for i in local_ips() if not i.startswith("127.")]
-        hosts = ips + [n for n in host_names() if n.endswith(".local")]
+        hosts = [n for n in host_names() if n.endswith(".local")]
+        ips = reachable_ips()
+        hosts += [i for i in ips if ":" not in i] + [url_host(i) for i in ips if ":" in i]
         return [f"https://{h}:{self.https_port}/" for h in hosts] or [
             f"https://localhost:{self.https_port}/"
         ]
@@ -450,6 +454,10 @@ class PhoneServer:
         s["clock_uncertainty_s"] = c.uncertainty if np.isfinite(c.uncertainty) else None
         s["session_dir"] = str(self.recorder.dir) if self.recorder else None
         return s
+
+
+def _url_host(h: str) -> str:
+    return f"[{h}]" if ":" in h else h
 
 
 def decode_jpeg(jpeg: bytes, max_width: int) -> np.ndarray | None:

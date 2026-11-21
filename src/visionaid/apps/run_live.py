@@ -216,10 +216,10 @@ def run(
                 th.start()
                 t_start = time.time()
             else:
-                from visionaid.phone.certs import host_names, local_ips
+                from visionaid.phone.certs import host_names, reachable_ips, url_host
 
-                ips = [i for i in local_ips() if not i.startswith("127.")]
-                for h in ips + [n for n in host_names() if n.endswith(".local")]:
+                hs = [n for n in host_names() if n.endswith(".local")]
+                for h in hs + [url_host(i) for i in reachable_ips()]:
                     print(f"  ouvrir sur le téléphone : https://{h}:{raw['_phone_https_port']}/")
                 t_start = time.time()
         else:

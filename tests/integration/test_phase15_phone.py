@@ -152,3 +152,29 @@ def test_session_recording_complete(phone_cfg, tmp_path):
     t_i = [s["t"] for s in imu]
     assert t_i[0] <= t_f[0] + 0.2 and t_i[-1] >= t_f[-1] - 0.2  # l'IMU couvre les images
     assert (d / "clock.jsonl").read_text().strip()
+
+
+def test_server_reachable_over_ipv6(tmp_path):
+    """Hôte « auto » : le serveur répond aussi en IPv6 (réseaux IPv6 seul)."""
+    import ssl
+    import urllib.request
+
+    cfg = load_config(
+        overrides={
+            "phone.certs_dir": str(tmp_path / "certs"),
+            "session.dir": str(tmp_path / "sessions"),
+            "phone.host": "auto",
+        }
+    )
+    srv = PhoneServer(cfg, https_port=free_port(), http_port=0).start()
+    try:
+        ctx = ssl.create_default_context(cafile=str(srv.certs.ca_cert))
+        ctx.check_hostname = False  # ::1 n'est pas forcément dans le certificat de test
+        for host in ("127.0.0.1", "[::1]"):
+            with urllib.request.urlopen(
+                f"https://{host}:{srv.https_port}/", context=ctx, timeout=5
+            ) as r:
+                assert r.status == 200
+        assert any(u.startswith("https://") for u in srv.urls())
+    finally:
+        srv.stop()

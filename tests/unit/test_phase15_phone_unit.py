@@ -222,3 +222,20 @@ def test_cert_reload_on_network_change(tmp_path):
     paths = ensure_certs(tmp_path, ["localhost"], ["127.0.0.1", "10.5.60.177"])
     ctx.load_cert_chain(str(paths.server_cert), str(paths.server_key))
     assert server_cert_covers(paths, ["localhost"], ["127.0.0.1", "10.5.60.177"])
+
+
+def test_ipv6_only_network_addresses(monkeypatch):
+    """Partage de connexion IPv6 seul : 192.0.0.2 (traduction) exclue, IPv6 proposée entre crochets."""
+    from visionaid.phone import certs
+
+    monkeypatch.setattr(
+        certs, "local_ips", lambda: ["127.0.0.1", "192.0.0.2", "2a01:cb1a:5025:cb4c::1d39"]
+    )
+    assert certs.reachable_ips() == ["2a01:cb1a:5025:cb4c::1d39"]
+    assert certs.url_host("2a01:cb1a:5025:cb4c::1d39") == "[2a01:cb1a:5025:cb4c::1d39]"
+    assert certs.url_host("10.0.0.2") == "10.0.0.2"
+
+
+def test_cert_covers_ipv6(tmp_path):
+    paths = ensure_certs(tmp_path, ["localhost"], ["127.0.0.1", "::1", "2a01:cb1a:5025:cb4c::1d39"])
+    assert server_cert_covers(paths, ["localhost"], ["2a01:cb1a:5025:cb4c::1d39"])

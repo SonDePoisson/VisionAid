@@ -34,24 +34,71 @@ class CertPaths:
     server_key: Path
 
 
-def local_ips() -> list[str]:
-    """Adresses IPv4 locales probables (interface par défaut + résolutions du nom d'hôte)."""
-    ips: set[str] = {"127.0.0.1"}
-    try:  # interface de sortie par défaut, sans envoyer de paquet
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+def _ifconfig_ipv6() -> set[str]:
+    """Adresses IPv6 globales des interfaces (macOS/BSD `ifconfig`, Linux `ip`), sans lien-local."""
+    import subprocess
+
+    out = ""
+    for cmd in (["ifconfig"], ["ip", "-6", "addr"]):
         try:
-            s.connect(("10.255.255.255", 1))
-            ips.add(s.getsockname()[0])
-        finally:
-            s.close()
-    except OSError:
-        pass
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=3).stdout
+            break
+        except (OSError, subprocess.SubprocessError):
+            continue
+    ips = set()
+    for line in out.splitlines():
+        parts = line.split()
+        if parts and parts[0] == "inet6" and len(parts) > 1:
+            a = parts[1].split("%")[0].split("/")[0]
+            try:
+                ip = ipaddress.ip_address(a)
+            except ValueError:
+                continue
+            if ip.is_global or (ip.is_private and not ip.is_link_local and not ip.is_loopback):
+                ips.add(str(ip))
+    return ips
+
+
+def local_ips() -> list[str]:
+    """Adresses locales joignables par le téléphone : IPv4 et IPv6 (réseaux IPv6 seul,
+    ex. partage de connexion 5G où le Mac n'a qu'une IPv4 de traduction 192.0.0.x)."""
+    ips: set[str] = {"127.0.0.1"}
+    for fam, probe in (
+        (socket.AF_INET, "10.255.255.255"),
+        (socket.AF_INET6, "2001:4860:4860::8888"),
+    ):
+        try:  # interface de sortie par défaut, sans envoyer de paquet
+            s = socket.socket(fam, socket.SOCK_DGRAM)
+            try:
+                s.connect((probe, 1))
+                ips.add(s.getsockname()[0].split("%")[0])
+            finally:
+                s.close()
+        except OSError:
+            pass
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
             ips.add(info[4][0])
     except OSError:
         pass
+    ips |= _ifconfig_ipv6()
     return sorted(ips)
+
+
+def reachable_ips() -> list[str]:
+    """Adresses à proposer au téléphone : sans boucle locale ni IPv4 de traduction (192.0.0.0/29)."""
+    out = []
+    for a in local_ips():
+        ip = ipaddress.ip_address(a)
+        if ip.is_loopback or (ip.version == 4 and ip in ipaddress.ip_network("192.0.0.0/29")):
+            continue
+        out.append(a)
+    return out
+
+
+def url_host(a: str) -> str:
+    """Hôte d'URL : crochets pour une IPv6."""
+    return f"[{a}]" if ":" in a else a
 
 
 def host_names() -> list[str]:
