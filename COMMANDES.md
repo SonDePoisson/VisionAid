@@ -16,7 +16,7 @@ Toutes les commandes se lancent depuis le dossier du projet (`~/VisionAid`). `Ct
 ```bash
 uv run python -m visionaid.apps.run_live --target "où est ma gourde" --height 150 --rerun live
 ```
-Ensuite, sur l'iPhone, dans Safari : `https://MacBook-Pro-de-Sarah.local:8443/`. Téléphone sur le torse, puis **Démarrer**.
+Ensuite, sur l'iPhone, dans Safari : `https://MacBook-Pro-de-Sarah.local:8443/`. Casque (Bluetooth) connecté à l'iPhone, téléphone sur le torse, puis **Démarrer**. Le guidage sonore joue dans le casque ; **Tester le son** vérifie gauche, droite et devant. Désactiver « Audio mono » (Réglages → Accessibilité → Audio/Visuel).
 
 Pour les clés : `--target "où sont mes clés"`.
 
@@ -125,6 +125,19 @@ uv run python -m visionaid.apps.run_phone --record calib_imu --height 150
 uv run python -m visionaid.apps.calibrate_phone --camera data/sessions/<…>_calib_camera --imu data/sessions/<…>_calib_imu
 ```
 Résultats dans `config/calib/iphone12_*.yaml`, utilisés automatiquement.
+
+### Démo sonore sur les scénarios simulés (sans modèle)
+```bash
+uv run python -m visionaid.apps.demo_sound
+```
+Écrit `outputs/demo_sons/{room_0,corridor_1,appearing_0}.mp4` : scénario simulé avec le son de guidage (à écouter au casque).
+
+### Sons de guidage
+Sons d'origine dans `assets/sounds/`, versions préparées (silences coupés, volume égalisé) dans `assets/sounds/processed/`. Après avoir changé un son d'origine :
+```bash
+uv run python -m visionaid.audio.prepare
+```
+Réglages (espacement des notes, fondus, halo, exagération des angles…) : section `audio` de `config/default.yaml`.
 
 ---
 

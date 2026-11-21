@@ -28,19 +28,28 @@
   .row { display:flex; gap:8px; } .row button { flex:1; }
   label { display:flex; gap:8px; align-items:center; margin:8px 0; }
   textarea { width:100%; background:#1c1c1c; color:var(--fg); border:0; border-radius:10px; padding:8px; font:inherit; }
+  .sound { background:#1c1c1c; border-radius:10px; padding:10px; margin:8px 0; }
+  .sound label { margin:6px 0 0; }
+  .sound input[type=range] { width:100%; accent-color:var(--accent); }
   #log { color:var(--muted); font-size:12px; white-space:pre-wrap; max-height:120px; overflow:auto; }
 </style>
 </head>
 <body>
 <main>
   <h1>VisionAId — capteur</h1>
-  <div id="status">Prêt. Fixez le téléphone sur le torse, écran vers vous, puis appuyez sur Démarrer.</div>
+  <div id="status">Prêt. Fixez le téléphone sur le torse, écran vers vous, branchez le casque, puis appuyez sur Démarrer.</div>
   <button id="start">Démarrer</button>
   <div class="grid">
     <div><b id="fps">–</b><span>images/s reçues par le PC</span></div>
     <div><b id="imu">–</b><span>IMU (Hz) reçue</span></div>
     <div><b id="rtt">–</b><span>aller-retour (ms)</span></div>
     <div><b id="age">–</b><span>âge des images (ms)</span></div>
+  </div>
+  <div class="sound">
+    <div><b>Son</b> <span id="sound">Mettez le casque, puis appuyez sur Démarrer.</span></div>
+    <label for="volume">Volume <output id="volumeOut"></output></label>
+    <input type="range" id="volume" min="-24" max="12" step="1" value="0">
+    <button id="testSound" class="secondary" disabled>Tester le son (gauche, droite, devant)</button>
   </div>
   <div id="level"><div id="bubble"></div></div>
   <div id="levelText">Niveau : téléphone vertical attendu (bulle au centre).</div>
@@ -54,6 +63,7 @@
   <button id="sendNotes" class="secondary" disabled>Envoyer les notes</button>
   <div id="log"></div>
 </main>
+<script src="/static/audio.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

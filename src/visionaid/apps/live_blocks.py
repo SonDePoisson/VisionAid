@@ -173,6 +173,60 @@ class LivePlannerBlock:
         return {"n_plans": self.n_plans, "n_invalid_stale": self.n_invalid_stale}
 
 
+# ---------------------------------------------------------------------------- guidage sonore
+class LiveGuidanceBlock:
+    """Consigne de guidage + consigne sonore, à cadence fixe (`realtime.cue_hz`).
+
+    Sans pose nouvelle depuis `stale_s` (téléphone déconnecté, géométrie bloquée), la pose est
+    considérée perdue : l'utilisateur entend « arrête-toi » au lieu d'un guide figé.
+    """
+
+    def __init__(self, raw: dict, stale_s: float = 1.5) -> None:
+        from visionaid.audio.director import SoundDirector
+        from visionaid.guidance.cues import GuidanceEngine
+
+        cfg = _cfg(raw)
+        self.engine = GuidanceEngine(cfg)
+        self.director = SoundDirector(cfg.audio)
+        self.stale_s = stale_s
+        self._last_key = None
+        self._last_wall = time.time()
+        self.modes: dict[str, int] = {}
+        self.n_stale = 0
+
+    def process(self, inputs: dict[str, Any]) -> dict[str, Any] | None:
+        from dataclasses import replace
+
+        pose = inputs.get("pose_world")
+        if pose is None:
+            return None  # pas encore de pose : silence
+        now = time.time()
+        key = (pose.frame_idx, pose.t)
+        if key != self._last_key:
+            self._last_key, self._last_wall = key, now
+        elif now - self._last_wall > self.stale_s:
+            pose = replace(pose, quality="lost")
+            self.n_stale += 1
+        cue = self.engine.update(
+            pose.t,
+            pose.frame_idx,
+            pose,
+            inputs.get("object"),
+            inputs.get("path"),
+            inputs.get("costmap"),
+        )
+        snd = self.director.command(cue)
+        self.modes[snd.mode] = self.modes.get(snd.mode, 0) + 1
+        return {"cue": cue, "sound": snd}
+
+    def stats(self) -> dict:
+        return {
+            "modes": self.modes,
+            "n_stale": self.n_stale,
+            "messages": self.engine.messages[-50:],
+        }
+
+
 # ---------------------------------------------------------------------------- puits
 class PathSink:
     """Mesure : latence capture → chemin publié, cadence de chemins valides, état de la cible.
@@ -519,6 +573,16 @@ class RerunLiveBlock:
             else:
                 rr.log("world/chemin", rr.Clear(recursive=False))
                 rr.log("world/visee", rr.Clear(recursive=False))
+        snd = inputs.get("sound")
+        if snd is not None and snd is not getattr(self, "_last_sound", None):
+            self._last_sound = snd
+            rr.log(
+                "status/son",
+                rr.TextLog(
+                    f"son : {snd.mode} ({snd.state}), direction {np.degrees(snd.azimuth):+.0f}°, "
+                    f"une note toutes les {snd.interval_s:.2f} s"
+                ),
+            )
         obj = inputs.get("object")
         if obj is not None and np.isfinite(obj.position).all():
             pos = np.asarray(obj.position, float)

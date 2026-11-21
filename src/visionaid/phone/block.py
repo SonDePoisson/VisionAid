@@ -90,9 +90,14 @@ class PhoneSourceBlock:
             meta=raw.get("_phone_meta"),
         ).start()
         self.t_start = time.time()
+        self._last_sound = None
 
     def process(self, inputs: dict[str, Any]) -> dict[str, Any] | None:
-        f, imu, c = self.inbox.get(0.05)
+        snd = inputs.get("sound")  # consigne sonore du nœud de guidage → téléphone
+        if snd is not None and snd is not self._last_sound:
+            self._last_sound = snd
+            self.server.send_sound(snd)
+        f, imu, c = self.inbox.get(0.02 if snd is not None else 0.05)
         out: dict[str, Any] = {}
         if imu is not None:  # l'IMU part avant l'image qu'elle précède
             out["imu"] = imu

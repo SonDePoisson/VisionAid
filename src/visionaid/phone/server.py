@@ -49,6 +49,7 @@ class ServerStats:
     n_calib: int = 0
     n_imu: int = 0
     n_bad: int = 0
+    n_sound: int = 0
     frame_ages: deque = field(default_factory=lambda: deque(maxlen=2000))
     frame_times: deque = field(default_factory=lambda: deque(maxlen=200))
     imu_times: deque = field(default_factory=lambda: deque(maxlen=2000))
@@ -68,6 +69,7 @@ class ServerStats:
             "n_calib": self.n_calib,
             "n_imu": self.n_imu,
             "n_bad": self.n_bad,
+            "n_sound": self.n_sound,
             "frame_age_ms_p50": float(np.percentile(ages, 50) * 1e3) if len(ages) else None,
             "frame_age_ms_p95": float(np.percentile(ages, 95) * 1e3) if len(ages) else None,
         }
@@ -180,6 +182,9 @@ class PhoneServer:
         app.router.add_get("/calib/board", self._board)
         app.router.add_get("/ca.crt", self._ca)
         app.router.add_static("/static/", WEB_DIR)
+        sounds = self._sounds_dir()
+        if sounds is not None:
+            app.router.add_static("/sounds/", sounds)
         self._runner = web.AppRunner(app, access_log=None)
         await self._runner.setup()
         ssl_ctx = server_ssl_context(self.certs)
@@ -310,9 +315,59 @@ class PhoneServer:
             log.info("Téléphone déconnecté")
         return ws
 
+    def _sounds_dir(self) -> Path | None:
+        a = getattr(self.cfg, "audio", None)
+        d = resolve_path(a.sounds_dir) if a is not None and getattr(a, "sounds_dir", None) else None
+        return d if d is not None and d.is_dir() else None
+
+    def _audio_settings(self) -> dict | None:
+        """Réglages du rendu sonore du téléphone (section `audio` de la config)."""
+        a = getattr(self.cfg, "audio", None)
+        if a is None or self._sounds_dir() is None:
+            return None
+        snd = a.sounds
+        return {
+            "sounds": {k: f"/sounds/{getattr(snd, k).file}" for k in ("guide", "arrived", "alert")},
+            "gains_db": {k: float(getattr(snd, k).gain_db) for k in ("guide", "arrived", "alert")},
+            "guide_notes": int(a.guide_notes),
+            "guide_note_s": float(a.guide_note_s),
+            "fade_in_s": float(a.guide_fade_in_s),
+            "fade_out_s": float(a.guide_fade_out_s),
+            "halo_mix": float(a.halo_mix),
+            "master_gain_db": float(a.master_gain_db),
+            "panning": "HRTF" if str(a.panning).lower() == "hrtf" else "equalpower",
+            "smoothing_s": float(a.smoothing_s),
+            "alert_period_s": float(a.alert_period_s),
+            "watchdog_s": float(a.watchdog_s),
+        }
+
+    def send_sound(self, cmd) -> bool:
+        """Envoie une `SoundCommand` au téléphone (appelable depuis n'importe quel thread)."""
+        ws, loop = self._ws, self._loop
+        if ws is None or ws.closed or loop is None:
+            return False
+        msg = {
+            "type": "sound",
+            "t": float(cmd.t),
+            "state": cmd.state,
+            "mode": cmd.mode,
+            "az": round(float(cmd.azimuth_render), 4),
+            "az_raw": round(float(cmd.azimuth), 4),
+            "dist": float(cmd.distance) if np.isfinite(cmd.distance) else None,
+            "interval": round(float(cmd.interval_s), 3),
+            "gain_db": round(float(cmd.gain_db), 2),
+            "lowpass_hz": round(float(cmd.lowpass_hz), 1),
+            "back_gain_db": round(float(cmd.back_gain_db), 2),
+            "event": cmd.event,
+        }
+        asyncio.run_coroutine_threadsafe(self._send(ws, msg), loop)
+        self.stats.n_sound += 1
+        return True
+
     def _welcome(self) -> dict:
         pc = self.cfg.phone
         return {
+            "audio": self._audio_settings(),
             "type": "welcome",
             "protocol": PROTOCOL_VERSION,
             "session": self.recorder.dir.name if self.recorder else None,
