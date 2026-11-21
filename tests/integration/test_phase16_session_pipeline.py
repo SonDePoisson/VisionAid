@@ -68,6 +68,7 @@ def test_offline_pipeline_on_session(tmp_path):
             "video.width": W,
             "paths.cache": str(tmp_path / "cache"),
             "depth.scale_factor": 1.0,
+            "phone.calib_dir": str(tmp_path / "calib"),  # sans la calibration de l'iPhone réel
         }
     )
     K = from_hfov(W, H, cfg.intrinsics.hfov_deg).K

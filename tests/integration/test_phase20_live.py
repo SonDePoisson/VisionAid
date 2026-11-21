@@ -27,6 +27,7 @@ def test_fake_phone_to_path_with_reconnection(tmp_path):
             "paths.cache": str(tmp_path / "cache"),
             "phone.certs_dir": str(tmp_path / "certs"),
             "bus.base_port": free_port() + 20,
+            "phone.calib_dir": str(tmp_path / "calib"),  # sans la calibration de l'iPhone réel
         }
     )
     raw["_phone_https_port"] = free_port()

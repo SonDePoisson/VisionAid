@@ -31,6 +31,7 @@ def test_keys_text_only_pipeline(tmp_path):
             "video.width": sp.W,
             "paths.cache": str(tmp_path / "cache"),
             "depth.scale_factor": 1.0,
+            "phone.calib_dir": str(tmp_path / "calib"),  # sans la calibration de l'iPhone réel
         },
     )
     K = from_hfov(sp.W, sp.H, cfg.intrinsics.hfov_deg).K
