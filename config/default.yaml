@@ -276,6 +276,7 @@ vio:
   gravity_gain: 0.05
   gravity_tolerance: 1.5   # |‖a‖ − g| (m/s²) toléré pour corriger la gravité
   gravity_init_s: 0.5
+  imu_extrapolate_s: 0.10  # avance tolérée de l'image sur le dernier gyroscope (lots de 50 ms)
   scale:
     enabled: true
     ema: 0.1

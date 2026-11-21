@@ -34,7 +34,11 @@ class VisualInertialOdometry:
         v = cfg.vio
         self.vo = RGBDOdometry(cfg.vo)
         self.calib = calib if calib is not None else load_imu_calib(cfg)
-        self.imu = ImuBuffer(self.calib)
+        # tolérance d'avance de l'image sur le dernier gyroscope reçu : les lots IMU arrivent
+        # toutes les 50 ms, une image peut donc précéder son lot (rotation prolongée ≤ 100 ms)
+        self.imu = ImuBuffer(
+            self.calib, extrapolate_s=float(getattr(v, "imu_extrapolate_s", 0.05) or 0.05)
+        )
         self.grav = GravityFilter(float(v.gravity_gain), float(v.gravity_tolerance))
         self.gyro_seed = bool(v.gyro_seed)
         self.max_disagree = float(v.max_disagree_deg)
