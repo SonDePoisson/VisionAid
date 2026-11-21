@@ -11,7 +11,7 @@ wheels/
 .vscode
 
 # Données, sorties, caches, poids
-data/
+/data/
 .cache/
 *.pt
 *.pth
