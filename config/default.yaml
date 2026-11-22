@@ -153,8 +153,9 @@ anchor:
 
 planning:
   algorithm: dstar        # astar | dstar
-  unknown_cost: 3.0
-  allow_unknown: true
+  unknown_cost: 3.0         # coût des zones inconnues (seulement si allow_unknown)
+  allow_unknown: false      # jamais de chemin par une zone jamais vue (noire dans la vue monde)…
+  frontier_fallback: true   # …sans chemin connu : chemin jusqu'à la limite de la zone connue
   lookahead_m: 1.0
   replan_hz: 5.0
   target_search_radius_m: 1.5
@@ -176,6 +177,10 @@ guidance:
   obstacle_cone_deg: 30.0
   obstacle_corridor_m: 0.25   # demi-largeur du couloir balayé par le corps
   final_direct_m: 0.30        # en approche, guidage direct quand le but est plus près
+  # continuité de la direction du son (repère monde ; la rotation du corps n'est pas freinée)
+  direction_tau_s: 0.3          # lissage : un changement de chemin glisse au lieu de sauter
+  direction_max_rate_dps: 90.0  # au plus 90°/s : jamais de saut d'une oreille à l'autre
+  direction_safe_m: 1.5         # sauf si la direction lissée mène sur un obstacle à < 1,5 m
   approach_lookahead_m: 0.5
   hysteresis_m: 0.15
   min_state_dwell_s: 0.3

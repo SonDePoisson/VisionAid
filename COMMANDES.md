@@ -165,7 +165,7 @@ uv run python -m visionaid.apps.run_live --fake-phone data/video/appart.mp4 --du
 
 ## 6. Diagnostic du chemin (qualité du guidage sur les sessions)
 
-Mesure, pour chaque session de navigation : quand le premier chemin valide apparaît, le temps passé en recherche, le taux de chemins valides, les départs bloqués et les sauts de direction.
+Mesure, pour chaque session de navigation : quand le premier chemin valide apparaît, le temps passé en recherche, le taux de chemins valides, les départs bloqués et les sauts de direction. Aussi : part des chemins passant par une zone jamais vue (`unknown_path_frac`, doit rester à 0) et sauts de la direction du son d'une image à l'autre (`sound_jumps_over_20`, `sound_jumps_over_45`).
 ```bash
 uv run python -m visionaid.apps.diag_path --all --out outputs/diag
 ```

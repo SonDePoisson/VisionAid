@@ -43,6 +43,27 @@ def head_frame(T_world_head: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.nda
     return pos, fwd, left
 
 
+def blocked_along(
+    cm: Costmap | None, pos: np.ndarray, bearing: float, dist: float, half_width: float
+) -> bool:
+    """Un obstacle de la carte se trouve-t-il dans le couloir du corps (demi-largeur
+    `half_width`) le long de la direction monde `bearing`, sur `dist` mètres ?"""
+    if cm is None or dist <= 0:
+        return False
+    res = float(cm.resolution)
+    c, s = math.cos(bearing), math.sin(bearing)
+    along = np.arange(0.2, dist + 1e-9, res)  # pas sous les pieds (bruit de la carte)
+    side = np.arange(-half_width, half_width + 1e-9, res)
+    a, b = np.meshgrid(along, side)
+    x = pos[0] + a * c - b * s
+    y = pos[1] + a * s + b * c
+    j = np.floor((x - cm.origin[0]) / res).astype(int)
+    i = np.floor((y - cm.origin[1]) / res).astype(int)
+    h, w = cm.state.shape
+    ok = (i >= 0) & (i < h) & (j >= 0) & (j < w)
+    return bool((cm.state[i[ok], j[ok]] == OCC).any())
+
+
 def relative_direction(T_world_head: np.ndarray, p_world: np.ndarray) -> tuple[float, float, float]:
     """(azimut gauche+, élévation haut+, distance horizontale) d'un point monde."""
     pos, fwd, left = head_frame(T_world_head)
@@ -120,6 +141,33 @@ class GuidanceEngine:
             self.obstacle_m + 0.3, float(getattr(a, "obstacle_far_m", 0.0) or 0.0)
         )
         self.messages: list[tuple[float, str]] = []
+        # continuité de la direction du son : la direction à suivre est lissée dans le repère
+        # monde (un changement de chemin glisse au lieu de sauter d'une oreille à l'autre), puis
+        # ramenée à la tête : une rotation du corps reste rendue immédiatement
+        self.dir_tau = float(getattr(g, "direction_tau_s", 0.0) or 0.0)
+        self.dir_rate = math.radians(float(getattr(g, "direction_max_rate_dps", 0.0) or 0.0))
+        self._bearing: float | None = None
+        self.dir_safe_m = float(getattr(g, "direction_safe_m", 1.0) or 0.0)
+        self.n_dir_snaps = 0
+        self._t_bearing = -math.inf
+
+    def smooth_bearing(self, t: float, bearing: float) -> float:
+        """Direction monde lissée (passe-bas `direction_tau_s`, puis au plus
+        `direction_max_rate_dps`). Repart de la direction brute après une interruption > 1 s."""
+        if self._bearing is None or t - self._t_bearing > 1.0 or t < self._t_bearing:
+            self._bearing = bearing
+        else:
+            dt = t - self._t_bearing
+            d = math.atan2(math.sin(bearing - self._bearing), math.cos(bearing - self._bearing))
+            if self.dir_tau > 0:
+                d *= 1.0 - math.exp(-dt / self.dir_tau)
+            if self.dir_rate > 0:
+                d = float(np.clip(d, -self.dir_rate * dt, self.dir_rate * dt))
+            self._bearing = math.atan2(
+                math.sin(self._bearing + d), math.cos(self._bearing + d)
+            )
+        self._t_bearing = t
+        return self._bearing
 
     def voice(self, t: float, state: str) -> str:
         """Message court au changement d'état, au plus un toutes les `voice_min_interval_s`."""
@@ -168,6 +216,29 @@ class GuidanceEngine:
                     state == OBSTACLE_ALERT and dist < self.approach_m
                 )
                 guide_az, el = self._guide_direction(T_head, obj, path, near, state == ARRIVED)
+                if state in (NAVIGATING, APPROACHING, ARRIVED, OBSTACLE_ALERT) and (
+                    self.dir_tau > 0 or self.dir_rate > 0
+                ):
+                    pos, fwd, _ = head_frame(T_head)
+                    yaw = math.atan2(fwd[1], fwd[0])
+                    raw = yaw + guide_az
+                    b = self.smooth_bearing(t, raw)
+                    lag = abs(math.atan2(math.sin(b - raw), math.cos(b - raw)))
+                    if (
+                        lag > math.radians(5)
+                        and blocked_along(cm, pos, b, self.dir_safe_m, self.corridor)
+                        and not blocked_along(cm, pos, raw, self.dir_safe_m, self.corridor)
+                    ):
+                        # la direction lissée mène sur un obstacle et la nouvelle est dégagée
+                        # (chemin replanifié pour l'éviter) : la sécurité prime, on la prend
+                        # tout de suite. Si les deux sont encombrées (pièce meublée), on lisse.
+                        b = self._bearing = raw
+                        self.n_dir_snaps += 1
+                    guide_az = math.atan2(math.sin(b - yaw), math.cos(b - yaw))
+                else:
+                    self._bearing = None
+            else:
+                self._bearing = None
             if state in (NAVIGATING, APPROACHING, ARRIVED):
                 az = guide_az
             elif state == OBSTACLE_ALERT:

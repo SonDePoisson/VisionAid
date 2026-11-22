@@ -8,7 +8,7 @@ import numpy as np
 from scipy.ndimage import distance_transform_edt
 
 from visionaid.bus.messages import Costmap, ObjectEstimate, Path
-from visionaid.mapping.costmap import FREE, OCC
+from visionaid.mapping.costmap import FREE, OCC, UNKNOWN
 from visionaid.planning.astar import astar
 from visionaid.planning.dstar_lite import DStarLite
 from visionaid.planning.grid import traversal_cost
@@ -67,6 +67,9 @@ class Planner:
         self.algorithm = str(p.algorithm)
         self.unknown_cost = float(p.unknown_cost)
         self.allow_unknown = bool(p.allow_unknown)
+        # pas de chemin connu jusqu'à l'objet : chemin jusqu'à la limite de la zone connue
+        self.frontier_fallback = bool(getattr(p, "frontier_fallback", True))
+        self.n_frontier = 0
         self.lookahead_m = float(p.lookahead_m)
         self.search_r = float(p.target_search_radius_m)
         self.body_clearance = float(cfg.guidance.obstacle_corridor_m)
@@ -94,36 +97,86 @@ class Planner:
         self.n_relaxed = 0
 
     def plan(self, cm: Costmap, user_xy: np.ndarray, obj: ObjectEstimate) -> Path:
+        """Chemin vers l'objet par des zones **connues** (vues libres) uniquement.
+
+        Sans `allow_unknown`, une zone jamais vue n'est jamais proposée, même plus courte. Si
+        aucun chemin connu n'atteint l'objet (carte encore partielle), le chemin s'arrête à la
+        limite de la zone connue, sur le meilleur trajet estimé (`frontier_fallback`) : on y
+        va, la carte s'étend, et le chemin complet apparaît.
+        """
         t, idx = cm.t, cm.frame_idx
         empty = Path(t, idx, np.zeros((0, 2)), np.full(2, np.nan), np.full(2, np.nan), False, 0.0)
         if obj is None or not np.isfinite(obj.position).all():
             return empty
-        cc = traversal_cost(cm.cost, cm.state, self.unknown_cost, self.allow_unknown)
         res, origin = cm.resolution, cm.origin
-        h, w = cc.shape
+        cc_known = traversal_cost(cm.cost, cm.state, self.unknown_cost, self.allow_unknown)
+        h, w = cc_known.shape
         s_ij = cell_of(user_xy, origin, res)
         o_ij = cell_of(obj.position[:2], origin, res)
         if not (0 <= s_ij[0] < h and 0 <= s_ij[1] < w):
             return empty
         o_ij = (int(np.clip(o_ij[0], 0, h - 1)), int(np.clip(o_ij[1], 0, w - 1)))
+        found = self._search(cm, cc_known, s_ij, o_ij, obj, self.allow_unknown)
+        frontier = False
+        if found is None and not self.allow_unknown and self.frontier_fallback:
+            cc_unk = traversal_cost(cm.cost, cm.state, self.unknown_cost, True)
+            found = self._search(cm, cc_unk, s_ij, o_ij, obj, True)
+            if found is not None:
+                goal, cells, start, _ = found
+                cells = self._cut_at_unknown(cm.state, cells)
+                if cells is None:
+                    found = None
+                else:
+                    found = (cells[-1], cells, start, cc_known)
+                    frontier = True
+                    self.n_frontier += 1
+        if found is None:
+            self.n_fail += 1
+            return empty
+        goal, cells, start, cc = found
+        self.n_plans += 1
+        cells = smooth_path(cc, cells)
+        pts = np.array([world_of(c, origin, res) for c in cells])
+        pts = (
+            np.vstack([user_xy[None, :2], pts[1:]])
+            if len(pts) > 1
+            else np.vstack([user_xy[None, :2], pts])
+        )
+        goal_xy = world_of(goal, origin, res)
+        kept = self._keep_previous(cc, origin, res, user_xy[:2], goal_xy, polyline_length(pts))
+        if kept is not None:
+            pts = kept
+            goal_xy = kept[-1].copy()  # le but publié est la fin du chemin réellement suivi
+            self.n_kept += 1
+        self.prev_pts, self.prev_goal = pts.copy(), goal_xy.copy()
+        length = polyline_length(pts)
+        if not frontier and self.near_goal > 0 and length < self.near_goal:
+            # au but : la direction d'un point à quelques centimètres n'a plus de sens, on vise
+            # l'objet lui-même (stable), comme le fait le guidage en fin d'approche
+            la = np.asarray(obj.position[:2], float).copy()
+        else:
+            la = self._lookahead_los(cm, pts, s_ij, start, origin, res)
+        return Path(t, idx, pts, la, goal_xy, True, length)
+
+    def _search(self, cm, cc, s_ij, o_ij, obj, allow_unknown: bool):
+        """But et cellules du chemin sur la grille de coûts `cc` ; (but, cellules, départ, cc)
+        ou None."""
+        res, origin = cm.resolution, cm.origin
         d_obj = None
         strict = np.isfinite(cc)  # franchissable avec la marge normale
         cc_strict = cc
         if self.zone > 0 and self.zone_clear > 0:
-            cc, d_obj = self._relax_near_object(cm, cc, obj, res, origin)
+            cc, d_obj = self._relax_near_object(cm, cc, obj, res, origin, allow_unknown)
         goal = nearest_passable(cc, o_ij, int(self.search_r / res), cm.state == FREE, toward=s_ij)
         if goal is None:
-            self.n_fail += 1
-            return empty
+            return None
         start = s_ij
         if not np.isfinite(cc[start]):
-            # l'utilisateur est dans une zone gonflée (bruit, meuble proche) : on part de la
-            # cellule franchissable la plus proche
+            # l'utilisateur est dans une zone gonflée (bruit, meuble proche) ou pas encore
+            # cartographiée : on part de la cellule franchissable la plus proche
             start = nearest_passable(cc, s_ij, int(1.0 / res))
             if start is None:
-                self.n_fail += 1
-                return empty
-        self.n_plans += 1
+                return None
         cells = None
         if self.reach > 0:
             reach = self._reach_goal(cc, start, obj, res, origin, d_obj, strict)
@@ -142,45 +195,34 @@ class Planner:
             if reach is not None:
                 goal, cells = reach
                 self.n_reach_goal += 1
-        if cells is not None:
-            pass
-        elif self.algorithm == "dstar":
-            key = (cc.shape, tuple(np.round(origin, 6)), goal)
-            if self.dstar is None or key != self._dkey:
-                self.dstar = DStarLite(cc, goal)
-                self._dkey = key
-            else:
-                self.dstar.set_costs(cc)
-            cells, _cost = self.dstar.plan(start)
-        else:
-            cells, _cost = astar(cc, start, goal)
         if cells is None:
-            self.n_fail += 1
-            return empty
-        cells = smooth_path(cc, cells)
-        pts = np.array([world_of(c, origin, res) for c in cells])
-        pts = (
-            np.vstack([user_xy[None, :2], pts[1:]])
-            if len(pts) > 1
-            else np.vstack([user_xy[None, :2], pts])
-        )
-        goal_xy = world_of(goal, origin, res)
-        kept = self._keep_previous(cc, origin, res, user_xy[:2], goal_xy, polyline_length(pts))
-        if kept is not None:
-            pts = kept
-            goal_xy = kept[-1].copy()  # le but publié est la fin du chemin réellement suivi
-            self.n_kept += 1
-        self.prev_pts, self.prev_goal = pts.copy(), goal_xy.copy()
-        length = polyline_length(pts)
-        if self.near_goal > 0 and length < self.near_goal:
-            # au but : la direction d'un point à quelques centimètres n'a plus de sens, on vise
-            # l'objet lui-même (stable), comme le fait le guidage en fin d'approche
-            la = np.asarray(obj.position[:2], float).copy()
-        else:
-            la = self._lookahead_los(cm, pts, s_ij, start, origin, res)
-        return Path(t, idx, pts, la, goal_xy, True, length)
+            if self.algorithm == "dstar" and not (allow_unknown and not self.allow_unknown):
+                key = (cc.shape, tuple(np.round(origin, 6)), goal)
+                if self.dstar is None or key != self._dkey:
+                    self.dstar = DStarLite(cc, goal)
+                    self._dkey = key
+                else:
+                    self.dstar.set_costs(cc)
+                cells, _cost = self.dstar.plan(start)
+            else:
+                cells, _cost = astar(cc, start, goal)
+        if cells is None:
+            return None
+        return goal, cells, start, cc
 
-    def _relax_near_object(self, cm, cc, obj, res, origin):
+    def _cut_at_unknown(self, state, cells):
+        """Coupe le chemin à la première cellule inconnue (après les cellules de départ) ; None
+        s'il ne reste rien d'utile (< 2 cellules connues)."""
+        k = 0
+        while k < len(cells) and state[cells[k]] == UNKNOWN:  # départ pas encore cartographié
+            k += 1
+        e = k
+        while e < len(cells) and state[cells[e]] != UNKNOWN:
+            e += 1
+        out = cells[:e]
+        return out if e - k >= 2 else None
+
+    def _relax_near_object(self, cm, cc, obj, res, origin, allow_unknown: bool = True):
         """Près de l'objet (≤ `approach_zone_m`), la marge passe de `robot_radius_m` à
         `approach_clearance_m` (demi-largeur du corps). Ces cellules restent plus coûteuses
         (`approach_penalty`) : on ne s'y engage que si cela raccourcit vraiment le trajet."""
@@ -193,6 +235,8 @@ class Planner:
         relax = (
             ~np.isfinite(cc) & (cm.state != OCC) & (clear >= self.zone_clear) & (d_obj <= self.zone)
         )
+        if not allow_unknown:  # la marge réduite ne rend jamais franchissable une zone inconnue
+            relax &= cm.state != UNKNOWN
         if relax.any():
             cc = cc.copy()
             cc[relax] = self.zone_penalty + np.where(cm.state[relax] < 0, self.unknown_cost, 0.0)
@@ -249,8 +293,10 @@ class Planner:
         """Chemin précédent, raccourci depuis l'utilisateur, s'il reste praticable et pas
         nettement plus long que le nouveau (évite l'alternance entre deux contournements
         presque équivalents sur une carte bruitée). None sinon."""
+        self.keep_why = "pas de chemin précédent"
         if self.commit_ratio <= 0 or self.prev_pts is None or len(self.prev_pts) < 2:
             return None
+        self.keep_why = "but déplacé"
         if np.linalg.norm(goal_xy - self.prev_goal) > 0.15:
             # but déplacé (même de peu) : nouveau chemin. Sinon le chemin gardé finirait à
             # l'ancien but pendant que le guidage compare la position au nouveau (agent bloqué
@@ -267,19 +313,23 @@ class Planner:
             d = float(np.linalg.norm(user_xy - p))
             if d < best:
                 best, best_k, best_p = d, k, p
+        self.keep_why = "écarté du chemin"
         if best > 0.5:
             return None  # l'utilisateur s'est écarté du chemin précédent
         rest = np.vstack([user_xy[None], best_p[None], prev[best_k + 1 :]])
         rest = rest[np.r_[True, np.linalg.norm(np.diff(rest, axis=0), axis=1) > 1e-6]]
         h, w = cc.shape
+        self.keep_why = "bloqué"
         for a, b in zip(rest[:-1], rest[1:], strict=True):  # praticable sur la nouvelle carte
             n = max(int(np.linalg.norm(b - a) / (0.5 * res)), 1)
             for s_ in np.linspace(0.0, 1.0, n + 1):
                 i, j = cell_of(a + s_ * (b - a), origin, res)
                 if not (0 <= i < h and 0 <= j < w) or not np.isfinite(cc[i, j]):
                     return None
+        self.keep_why = "trop long"
         if polyline_length(rest) > new_len * (1.0 + self.commit_ratio) + self.commit_margin:
             return None
+        self.keep_why = "gardé"
         return rest
 
     def _lookahead_los(self, cm: Costmap, pts, user_ij, start, origin, res) -> np.ndarray:
@@ -294,6 +344,8 @@ class Planner:
 
         clear = distance_to_obstacles(cm.state, res)
         body = np.where(clear >= self.body_clearance, 0.0, np.inf)
+        if not self.allow_unknown:  # la visée ne coupe pas non plus par une zone jamais vue
+            body[cm.state == UNKNOWN] = np.inf
         h, w = body.shape
         src = user_ij if np.isfinite(body[user_ij]) else start
         d = self.lookahead_m

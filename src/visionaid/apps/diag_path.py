@@ -16,13 +16,49 @@ from pathlib import Path
 
 import numpy as np
 
-from visionaid.mapping.costmap import FREE, OCC
+from visionaid.mapping.costmap import FREE, OCC, UNKNOWN
 from visionaid.planning import planner as P
 from visionaid.planning.grid import traversal_cost
 
 
 def _wrap_deg(a: float) -> float:
     return abs((a + 180.0) % 360.0 - 180.0)
+
+
+def unknown_length(cm, pts: np.ndarray, skip_m: float = 0.3, step: float = 0.05) -> float:
+    """Longueur (m) du chemin dans des cellules inconnues (hors des `skip_m` premiers mètres,
+    sous les pieds de l'utilisateur)."""
+    if len(pts) < 2:
+        return 0.0
+    seg = np.diff(pts, axis=0)
+    ln = np.hypot(seg[:, 0], seg[:, 1])
+    cum = np.r_[0.0, np.cumsum(ln)]
+    s = np.arange(skip_m, cum[-1], step)
+    if not len(s):
+        return 0.0
+    x = np.interp(s, cum, pts[:, 0])
+    y = np.interp(s, cum, pts[:, 1])
+    j = np.floor((x - cm.origin[0]) / cm.resolution).astype(int)
+    i = np.floor((y - cm.origin[1]) / cm.resolution).astype(int)
+    h, w = cm.state.shape
+    ok = (i >= 0) & (i < h) & (j >= 0) & (j < w)
+    unk = np.ones(len(s), bool)  # hors carte = inconnu
+    unk[ok] = cm.state[i[ok], j[ok]] == UNKNOWN
+    return float(unk.sum() * step)
+
+
+def guide_bearing_deg(cue, pose) -> float | None:
+    """Direction du son de guidage dans le repère monde (°), ou None hors guidage."""
+    import math
+
+    from visionaid.guidance.cues import head_frame
+
+    if pose is None or cue.state not in ("NAVIGATING", "APPROACHING", "OBSTACLE_ALERT"):
+        return None
+    if not math.isfinite(cue.guide_azimuth):
+        return None
+    _, fwd, _ = head_frame(pose.T_world_cam)
+    return float(np.degrees(math.atan2(fwd[1], fwd[0]) + cue.guide_azimuth))
 
 
 def diag_session(session_dir, cfg=None) -> tuple[dict, list[dict]]:
@@ -59,6 +95,9 @@ def diag_session(session_dir, cfg=None) -> tuple[dict, list[dict]]:
             "user": [float(x) for x in user_xy[:2]],
             "la": [float(x) for x in path.lookahead] if path.valid else None,
             "points": path.points.tolist() if path.valid else [],
+            "unknown_m": unknown_length(cm, path.points) if path.valid else 0.0,
+            "keep": getattr(pl, "keep_why", None),
+            "goal": [float(x) for x in path.goal] if path.valid else None,
             "obj": [float(x) for x in obj.position[:2]] if known else None,
             "occ": float((cm.state == OCC).mean()),
             "free": float((cm.state == FREE).mean()),
@@ -86,6 +125,7 @@ def diag_session(session_dir, cfg=None) -> tuple[dict, list[dict]]:
                 "state": r["cue"].state,
                 "confirmed": bool(d is not None and d.target_idx >= 0),
                 "obj_state": r["object"].state,
+                "guide_deg": guide_bearing_deg(r["cue"], r["pose_world"]),
                 "user": [float(x) for x in r["pose_world"].T_world_cam[:2, 3]]
                 if r["pose_world"] is not None
                 else None,
@@ -139,8 +179,30 @@ def summarize(name: str, frames: list[dict], plans: list[dict]) -> dict:
         "aim_jump_deg_med": round(float(np.median(jumps)), 1) if jumps else None,
         "aim_jump_deg_p90": round(float(np.percentile(jumps, 90)), 1) if jumps else None,
         "aim_jumps_over_30": int(np.sum(np.array(jumps) > 30)) if jumps else 0,
+        # chemins passant par des zones jamais vues (> 20 cm hors des pieds de l'utilisateur)
+        "unknown_path_frac": round(
+            float(np.mean([p.get("unknown_m", 0.0) > 0.2 for p in valid])), 3
+        )
+        if valid
+        else None,
+        "unknown_m_max": round(max((p.get("unknown_m", 0.0) for p in valid), default=0.0), 2),
+        **_sound_jumps(frames),
         "states": {k: states.count(k) for k in sorted(set(states))},
         "final_state": states[-1] if states else None,
+    }
+
+
+def _sound_jumps(frames: list[dict]) -> dict:
+    """Sauts de la direction du son de guidage (repère monde) d'une image à la suivante."""
+    d = []
+    for a, b in zip(frames, frames[1:], strict=False):
+        if a.get("guide_deg") is None or b.get("guide_deg") is None or b["t"] - a["t"] > 0.5:
+            continue
+        d.append(_wrap_deg(b["guide_deg"] - a["guide_deg"]))
+    return {
+        "sound_jump_deg_p90": round(float(np.percentile(d, 90)), 1) if d else None,
+        "sound_jumps_over_20": int(np.sum(np.array(d) > 20)) if d else 0,
+        "sound_jumps_over_45": int(np.sum(np.array(d) > 45)) if d else 0,
     }
 
 
