@@ -34,26 +34,27 @@ En-tête : `{"type": "frame", "seq": int, "t_phone": float, "w": int, "h": int, 
 | `pong` | `id`, `t_phone`, `t_pc` | Réponse au ping. |
 | `stats` | `fps_in`, `imu_hz`, `offset_ms`, `rtt_ms`, `frame_age_ms` | Toutes les secondes, pour l'affichage sur le téléphone. |
 | `error` | `message` | Erreur fatale (version, format), suivie de la fermeture. |
-| `sound` | `t`, `state`, `mode`, `az`, `az_raw`, `dist`, `interval`, `gain_db`, `lowpass_hz`, `back_gain_db`, `event` | Consigne sonore, ~20 par seconde (`realtime.cue_hz`). Voir « Son ». |
+| `sound` | `t`, `state`, `mode`, `az`, `pan`, `dist`, `interval`, `gain_db`, `obstacle_db`, `event` | Consigne sonore, ~20 par seconde (`realtime.cue_hz`). Voir « Son ». |
 
 ## Son (PC → téléphone → casque)
 
-Le PC décide quoi jouer (`audio/director.py`), le téléphone l'exécute avec Web Audio (`web/audio.js`), spatialisation HRTF du navigateur. Les sons sont servis par le PC sur `/sounds/<fichier>` (dossier `audio.sounds_dir`).
+Le PC décide quoi jouer (`audio/director.py`), le téléphone l'exécute avec Web Audio (`web/audio.js`). Les sons sont servis par le PC sur `/sounds/<fichier>` (dossier `audio.sounds_dir`). Deux couches superposées : le **chemin** (note répétée, pan stéréo) et les **obstacles** (nappe en boucle, volume selon la distance).
 
-`welcome.audio` : `sounds` (`guide`, `arrived`, `alert` → URL), `gains_db` (par son), `guide_notes`, `guide_note_s`, `fade_in_s`, `fade_out_s`, `halo_mix`, `master_gain_db`, `panning` (`HRTF` ou `equalpower`), `smoothing_s`, `alert_period_s`, `watchdog_s`.
+`welcome.audio` : `sounds` (`guide`, `search`, `arrived`, `obstacle` → URL), `gains_db` (par son), `master_gain_db`, `smoothing_s` (pan), `obstacle_smoothing_s`, `lost_obstacle_db`, `watchdog_s`.
 
 Message `sound` :
 
 | Champ | Sens |
 |---|---|
-| `mode` | `search` (note douce qui balaie), `guide` (note spatialisée répétée), `alert` (son grave non spatialisé, répété toutes les `alert_period_s`), `arrived` (silence après le son d'arrivée), `silent` |
-| `az` | direction à rendre (rad, positif à gauche), après exagération des petits angles ; `az_raw` : direction réelle |
-| `interval` | espacement entre deux notes du guide (s), réduit en approchant |
-| `gain_db` | gain de la note (recherche : plus douce) |
-| `lowpass_hz`, `back_gain_db` | assourdissement quand l'objectif est derrière |
+| `mode` | couche chemin : `search` (son de recherche répété), `guide` (note du chemin répétée), `lost` (repérage perdu : plus de chemin), `arrived` (silence après le son d'arrivée), `silent` |
+| `az` | direction du chemin (rad, positif à gauche) |
+| `pan` | pan stéréo à puissance constante : −1 = tout à gauche (rien à droite), 0 = centre, +1 = tout à droite. Chemin derrière : ±1 du côté du demi-tour le plus court |
+| `interval` | espacement entre deux notes (s), réduit sous `audio.guide_accel_m` de la cible |
+| `gain_db` | gain de la note |
+| `obstacle_db` | gain de la nappe des obstacles (≤ −120 : muette), lissé sur `obstacle_smoothing_s` |
 | `event` | `arrived` : jouer le son d'arrivée une fois |
 
-Sans message `sound` depuis `watchdog_s` (1,5 s) pendant le guidage, le téléphone joue l'alerte « arrête-toi » : un guide figé serait dangereux.
+Sans message `sound` depuis `watchdog_s` (1,5 s) pendant le guidage, le téléphone passe en « repérage perdu » (plus de chemin, nappe à `lost_obstacle_db`) : un guide figé serait dangereux.
 
 ## Publication sur le bus (côté PC)
 - `frame` → `Frame(t=t_phone, frame_idx=seq, image=BGR redimensionnée à video.width, K, t_phone, t_recv)`.

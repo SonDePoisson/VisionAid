@@ -60,18 +60,19 @@ async def _client(srv, cmd: SoundCommand):
 
 
 def test_welcome_audio_sounds_served_and_sound_messages(cfg):
-    cmd = SoundCommand(2.0, 7, "NAVIGATING", "guide", 0.5, 0.8, 3.0, 1.0, 0.0, 20000.0, 0.0, "")
+    cmd = SoundCommand(2.0, 7, "NAVIGATING", "guide", 0.5, -0.6, 3.0, 1.0, 0.0, -14.0, "")
     with PhoneServer(cfg, https_port=free_port(), http_port=0) as srv:
         got = asyncio.run(_client(srv, cmd))
     a = got["welcome"]["audio"]
-    assert a["sounds"]["guide"].endswith("direction_2.wav")
-    assert a["panning"] == "HRTF" and a["guide_notes"] == 1
-    assert a["fade_out_s"] == pytest.approx(cfg.audio.guide_fade_out_s)
-    for k in ("guide", "search", "arrived", "alert"):
+    assert a["sounds"]["guide"].endswith("chemin.wav")
+    assert a["sounds"]["obstacle"].endswith("obstacles.wav")
+    assert a["obstacle_smoothing_s"] == pytest.approx(cfg.audio.obstacle_smoothing_s)
+    for k in ("guide", "search", "arrived", "obstacle"):
         status, size = got[f"http_{k}"]
         assert status == 200 and size > 10_000
     s = got["sound"]
-    assert s["mode"] == "guide" and s["az"] == pytest.approx(0.8) and s["interval"] == 1.0
+    assert s["mode"] == "guide" and s["pan"] == pytest.approx(-0.6) and s["interval"] == 1.0
+    assert s["obstacle_db"] == pytest.approx(-14.0)
 
 
 def _pose(t, idx, quality="ok"):
@@ -92,5 +93,5 @@ def test_live_guidance_block_sound_and_stale_pose():
     for _ in range(3):  # pose figée : repérage perdu → « arrête-toi »
         out = blk.process({"pose_world": _pose(0.0, 1)})
         time.sleep(0.2)
-    assert out["cue"].state == "TRACKING_LOST" and out["sound"].mode == "alert"
+    assert out["cue"].state == "TRACKING_LOST" and out["sound"].mode == "lost"
     assert not math.isnan(out["sound"].interval_s)

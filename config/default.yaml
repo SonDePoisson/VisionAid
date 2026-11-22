@@ -183,36 +183,37 @@ guidance:
   T_cam_head: [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
 
 audio:
-  # sons préparés par `python -m visionaid.audio.prepare` (volume perçu égalisé à −20 LUFS)
+  # sons préparés par `python -m visionaid.audio.prepare` (VisionAid_Sounds 1 à 4, volume égalisé)
   sounds_dir: assets/sounds/processed
   sounds:
-    guide: {file: direction_2.wav, gain_db: 0}     # objet trouvé : guidage vers lui
-    search: {file: exploration_douce.wav, gain_db: 0} # objet pas encore trouvé : sol-ré doux
-    arrived: {file: arrivee_arpege.wav, gain_db: 0} # arpège do-mi-sol-do (vous_etes_arrive.wav possible)
-    alert: {file: zone_spaciale_grave.wav, gain_db: 0}
-  guide_notes: 1              # notes de direction_2 jouées à chaque répétition (5 = motif complet)
-  guide_note_s: 0.375         # intervalle entre les notes de direction_2
-  guide_fade_in_s: 0.045
-  guide_fade_out_s: 0.35
-  guide_interval_far_s: 1.1   # espacement entre deux notes à guide_far_m et au-delà
-  guide_interval_near_s: 0.65 # espacement tout près : diminue linéairement entre les deux
-  guide_far_m: 5.0
-  search_gain_db: -6          # recherche : deux notes douces (sol-ré), qui balaient…
-  search_interval_s: 1.8      # …et plus lent que le guidage (une fois par 1,8 s)
-  alert_period_s: 2.3         # obstacle ou repérage perdu : un son toutes les 2,3 s
+    guide: {file: chemin.wav, gain_db: 0}        # son 2 : le chemin, note répétée et pannée
+    search: {file: recherche.wav, gain_db: -4}   # son 4 : objet pas encore trouvé
+    arrived: {file: arrivee.wav, gain_db: 0}     # son 3 : arrivée, une fois
+    obstacle: {file: obstacles.wav, gain_db: 0}  # son 1 : nappe en boucle, volume selon la distance
+  # chemin : pan stéréo à puissance constante, pan = azimut / 90° (tout à gauche à 90° et au-delà :
+  # 100 % oreille gauche, 0 % droite). Chemin derrière : le côté du demi-tour le plus court est
+  # gardé tant que le chemin ne passe pas franchement de l'autre côté (|azimut| < back_hold_deg)
+  back_hold_deg: 150
+  smoothing_s: 0.05           # lissage du pan (aucun clic)
+  # tempo du chemin : une note toutes les `guide_interval_far_s` au loin ; en dessous de
+  # `guide_accel_m` de la cible, l'espacement diminue jusqu'à `guide_interval_near_s` à `guide_near_m`
+  guide_interval_far_s: 1.2
+  guide_interval_near_s: 0.35
+  guide_accel_m: 2.0
+  guide_near_m: 0.5
+  search_interval_s: 1.2      # recherche : rythme du son 4
+  # obstacles (couloir frontal du corps) : muet au-delà de `obstacle_far_m`, puis de
+  # `obstacle_min_db` à `obstacle_max_db` à `obstacle_near_m` et plus près (jamais plus fort que le chemin)
+  obstacle_far_m: 1.5
+  obstacle_near_m: 0.4
+  obstacle_min_db: -24
+  obstacle_max_db: -6
+  obstacle_smoothing_s: 0.3   # volume des obstacles lissé : pas de sursaut
+  lost_obstacle_db: -12       # repérage perdu : plus de chemin, nappe à volume moyen (« arrête-toi »)
   arrived_cooldown_s: 5.0     # le son d'arrivée ne se rejoue pas avant ce délai
   master_gain_db: 0
-  panning: hrtf               # téléphone : hrtf (binaural) | equalpower
-  azimuth_expansion: 1.8      # exagération des petits angles (1 = aucune, ≤ 2) : 10° → 18°
-  back_lowpass_hz: 1000       # objectif derrière : son assourdi…
-  back_gain_db: -3            # …et un peu plus faible
-  smoothing_s: 0.05           # lissage de la direction
-  halo_mix: 0.14              # réverbération légère (diffuse, non spatialisée)
-  watchdog_s: 1.5             # téléphone : sans consigne depuis ce délai → alerte « arrête-toi »
-  # rendu hors ligne (WAV) : spatialisation paramétrique
-  sample_rate: 44100
-  head_radius_m: 0.0875
-  speed_of_sound: 343.0
+  watchdog_s: 1.5             # téléphone : sans consigne depuis ce délai → repérage perdu
+  sample_rate: 44100          # rendu hors ligne (WAV)
 
 sim:
   dt: 0.1

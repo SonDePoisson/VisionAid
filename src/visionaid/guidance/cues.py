@@ -113,6 +113,12 @@ class GuidanceEngine:
         self.t_voice = -math.inf
         self.last_state = None
         self.sweep_rate = math.radians(float(cfg.sim.sweep_rate_dps))
+        self.approach_m = float(g.approach_m)
+        # portée de la recherche d'obstacles : celle de l'alerte, ou celle du son des obstacles
+        a = getattr(cfg, "audio", None)
+        self.obstacle_range = max(
+            self.obstacle_m + 0.3, float(getattr(a, "obstacle_far_m", 0.0) or 0.0)
+        )
         self.messages: list[tuple[float, str]] = []
 
     def voice(self, t: float, state: str) -> str:
@@ -149,37 +155,21 @@ class GuidanceEngine:
                 ):  # cible probable : jamais « arrivé » avant confirmation
                     dist = max(dist, self.arrived_floor)
             obst_d, obst_az = frontal_obstacle(
-                cm, T_head, self.obstacle_m + 0.3, self.cone, self.corridor
+                cm, T_head, self.obstacle_range, self.cone, self.corridor
             )
         x = GuidanceInputs(t, lost, known, dist, obst_d, path is not None and path.valid)
         state = self.sm.step(x)
         az = el = 0.0
         alert = 0.0
+        guide_az = math.nan
         if T_head is not None:
-            if state == NAVIGATING:
-                target = (
-                    path.lookahead
-                    if (path is not None and path.valid and np.isfinite(path.lookahead).all())
-                    else obj.position[:2]
+            if known:
+                near = state in (APPROACHING, ARRIVED) or (
+                    state == OBSTACLE_ALERT and dist < self.approach_m
                 )
-                az, _, _ = relative_direction(T_head, target)
-            elif state in (APPROACHING, ARRIVED):
-                az, el, _ = relative_direction(T_head, obj.position)
-                # approche : on suit la fin du chemin (dégagée) tant que le but est à plus de
-                # `final_direct_m`, puis guidage direct vers l'objet (évite les coins de meubles)
-                if (
-                    state == APPROACHING
-                    and path is not None
-                    and path.valid
-                    and len(path.points) > 1
-                ):
-                    from visionaid.planning.lookahead import lookahead_point
-
-                    head_xy = T_head[:2, 3]
-                    if np.linalg.norm(path.goal - head_xy) > self.final_m:
-                        az, _, _ = relative_direction(
-                            T_head, lookahead_point(path.points, self.approach_lookahead)
-                        )
+                guide_az, el = self._guide_direction(T_head, obj, path, near, state == ARRIVED)
+            if state in (NAVIGATING, APPROACHING, ARRIVED):
+                az = guide_az
             elif state == OBSTACLE_ALERT:
                 az = obst_az
                 alert = (
@@ -189,11 +179,50 @@ class GuidanceEngine:
                 )
             elif state == SEARCHING:
                 az = math.radians(60.0) * math.sin(self.sweep_rate * t)  # consigne de balayage lent
+                guide_az = az
+            if state != APPROACHING and state != ARRIVED:
+                el = 0.0
         if state == TRACKING_LOST:
             alert = 1.0
+        # obstacle à signaler par le son : objet connu et pas encore tout près (le meuble qui
+        # porte la cible n'est pas un obstacle), même règle que l'alerte
+        obst_report = obst_d if known and dist >= self.approach_m else math.inf
         return GuidanceCue(
-            t, frame_idx, state, float(az), float(el), float(dist), alert, self.voice(t, state)
+            t,
+            frame_idx,
+            state,
+            float(az),
+            float(el),
+            float(dist),
+            alert,
+            self.voice(t, state),
+            float(guide_az),
+            float(obst_report),
         )
+
+    def _guide_direction(
+        self, T_head, obj, path, near: bool, direct: bool = False
+    ) -> tuple[float, float]:
+        """(azimut, élévation) du chemin à suivre : visée du chemin au loin ; près de la cible,
+        fin du chemin (dégagée) tant que le but est à plus de `final_direct_m`, puis l'objet
+        (`direct` : l'objet tout de suite)."""
+        if not near:
+            target = (
+                path.lookahead
+                if (path is not None and path.valid and np.isfinite(path.lookahead).all())
+                else obj.position[:2]
+            )
+            az, _, _ = relative_direction(T_head, target)
+            return az, 0.0
+        az, el, _ = relative_direction(T_head, obj.position)
+        if not direct and path is not None and path.valid and len(path.points) > 1:
+            from visionaid.planning.lookahead import lookahead_point
+
+            if np.linalg.norm(path.goal - T_head[:2, 3]) > self.final_m:
+                az, _, _ = relative_direction(
+                    T_head, lookahead_point(path.points, self.approach_lookahead)
+                )
+        return az, el
 
     # interface Block du bus
     def process(self, inputs: dict[str, Any]) -> dict[str, Any] | None:

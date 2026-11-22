@@ -580,7 +580,8 @@ class RerunLiveBlock:
                 "status/son",
                 rr.TextLog(
                     f"son : {snd.mode} ({snd.state}), direction {np.degrees(snd.azimuth):+.0f}°, "
-                    f"une note toutes les {snd.interval_s:.2f} s"
+                    f"pan {snd.pan:+.2f}, une note toutes les {snd.interval_s:.2f} s, "
+                    f"obstacles {snd.obstacle_db:.0f} dB"
                 ),
             )
         obj = inputs.get("object")

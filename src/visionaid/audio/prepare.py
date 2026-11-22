@@ -1,7 +1,7 @@
 """Préparation des sons de guidage : coupe des silences, fondus, mono, volume perçu égalisé.
 
-Les fichiers d'origine (`assets/sounds/*.wav`) ne sont jamais modifiés ; les versions préparées
-sont écrites dans `assets/sounds/processed/` avec un rapport `levels.json`.
+Les fichiers d'origine (`assets/sounds/VisionAid_Sounds*.mp3`) ne sont jamais modifiés ; les
+versions préparées sont écrites dans `assets/sounds/processed/` avec un rapport `levels.json`.
 
 Volume perçu : sonie BS.1770 (pondération K) maximale sur une fenêtre glissante de 400 ms
 (« sonie momentanée »), ramenée à `target_lufs` ; crête limitée à `peak_dbfs`.
@@ -20,50 +20,35 @@ import numpy as np
 
 from visionaid.utils.config import resolve_path
 
-# sons spatialisés : passés en mono (la spatialisation ajoute la stéréo)
+# sons du guidage (VisionAid_Sounds, « Mellow Bells ») → fichiers préparés
+# - mono : passé en mono (le pan stéréo est ajouté au rendu) ;
+# - segment : (début, fin) en s gardés du fichier d'origine (les fichiers 2 et 4 répètent deux
+#   fois le même motif : on n'en garde qu'un, rejoué au rythme voulu) ;
+# - loop : rendu bouclable sans couture (fondu enchaîné fin → début), sans fondus d'extrémité.
 SOUNDS = {
-    "direction_1.wav": {"mono": True},
-    "direction_2.wav": {"mono": True},
-    "vous_etes_arrive.wav": {"mono": False},
-    "zone_spaciale_grave.wav": {"mono": False},
+    "chemin.wav": {"src": "VisionAid_Sounds 2-Mellow Bells.mp3", "mono": True, "segment": (0, 0.8)},
+    "recherche.wav": {"src": "VisionAid_Sounds 4.mp3", "mono": True, "segment": (0, 1.2)},
+    "arrivee.wav": {
+        "src": "VisionAid_Sounds 3-Mellow Bells.mp3",
+        "mono": True,
+        "segment": (0, 1.0),
+    },
+    "obstacles.wav": {"src": "VisionAid_Sounds 1-Mellow Bells.mp3", "mono": False, "loop": True},
 }
+LOOP_XFADE_S = 0.08
 
 
-def arrival_chime(fs: int) -> np.ndarray:
-    """Ancien son d'arrivée (avant les sons enregistrés) : arpège ascendant do-mi-sol-do, 0,6 s."""
-    d = 0.15
-    t = np.arange(int(d * fs)) / fs
-    env = np.sin(np.pi * t / d) ** 2
-    return np.concatenate(
-        [env * np.sin(2 * np.pi * f * t) for f in (523.25, 659.25, 783.99, 1046.5)]
-    )
+def make_loop(x: np.ndarray, fs: int, xfade_s: float = LOOP_XFADE_S) -> np.ndarray:
+    """Boucle sans couture : la fin (fondu sortant) est mélangée au début (fondu entrant).
 
-
-def exploration_soft(fs: int) -> np.ndarray:
-    """Son d'exploration doux : deux notes sol-ré (392 → 587 Hz) façon carillon feutré.
-
-    Attaque lente (70 ms, pas de « clic » ni de percussion), extinction exponentielle, timbre
-    presque pur (harmoniques 2 et 3 très faibles, juste assez pour la spatialisation HRTF).
-    """
-    out = []
-    for f, d in ((392.0, 0.55), (587.33, 0.75)):
-        t = np.arange(int(d * fs)) / fs
-        env = (1 - np.exp(-t / 0.025)) * np.exp(-t / (d / 3.5))
-        env *= np.clip((d - t) / 0.08, 0, 1)  # fin sans coupure
-        tone = (
-            np.sin(2 * np.pi * f * t)
-            + 0.12 * np.sin(2 * np.pi * 2 * f * t)
-            + 0.04 * np.sin(2 * np.pi * 3 * f * t)
-        )
-        out.append(env * tone)
-    return np.concatenate(out)
-
-
-# sons synthétisés (pas de fichier d'origine), préparés comme les autres
-SYNTH = {
-    "arrivee_arpege.wav": (arrival_chime, 44100),
-    "exploration_douce.wav": (exploration_soft, 44100),
-}
+    Le résultat, répété bout à bout, est continu (aucun clic à la jonction)."""
+    n = min(int(xfade_s * fs), len(x) // 4)
+    if n <= 0:
+        return x
+    w = (0.5 - 0.5 * np.cos(np.pi * np.arange(n) / n)).reshape(-1, *([1] * (x.ndim - 1)))
+    y = x[: len(x) - n].copy()
+    y[:n] = x[:n] * w + x[len(x) - n :] * (1 - w)
+    return y
 
 
 def _biquad_shelf(fs: float) -> tuple[np.ndarray, np.ndarray]:
@@ -147,7 +132,13 @@ def fades(x: np.ndarray, fs: int, fade_in_s: float = 0.004, fade_out_s: float = 
 
 
 def prepare_one(
-    x: np.ndarray, fs: int, mono: bool, target_lufs: float, peak_dbfs: float
+    x: np.ndarray,
+    fs: int,
+    mono: bool,
+    target_lufs: float,
+    peak_dbfs: float,
+    loop: bool = False,
+    fade_out_s: float = 0.03,
 ) -> tuple[np.ndarray, dict]:
     x = np.asarray(x, np.float64)
     if x.ndim == 1:
@@ -155,7 +146,7 @@ def prepare_one(
     before = {"lufs_m": momentary_loudness(x, fs), "dur_s": len(x) / fs}
     if mono:
         x = x.mean(axis=1, keepdims=True)
-    x = fades(trim(x, fs), fs)
+    x = make_loop(trim(x, fs, pre_s=0.0), fs) if loop else fades(trim(x, fs), fs, 0.004, fade_out_s)
     gain_db = target_lufs - momentary_loudness(x, fs)
     x = x * 10 ** (gain_db / 20)
     peak = float(np.abs(x).max())
@@ -183,21 +174,24 @@ def main(argv=None) -> dict:
     src, dst = resolve_path(a.src), resolve_path(a.dst)
     dst.mkdir(parents=True, exist_ok=True)
     report = {"target_lufs": a.target_lufs, "peak_dbfs": a.peak_dbfs, "sounds": {}}
-    items = [(n, o["mono"], Path(src) / n) for n, o in SOUNDS.items()]
-    items += [(n, True, gen) for n, gen in SYNTH.items()]
-    for name, mono, srcp in items:
-        if isinstance(srcp, tuple):
-            fs = srcp[1]
-            x = srcp[0](fs)[:, None]
-        elif srcp.exists():
-            x, fs = sf.read(str(srcp), always_2d=True)
-        else:
+    for name, o in SOUNDS.items():
+        srcp = Path(src) / o["src"]
+        if not srcp.exists():
+            print(f"{name:16s} absent : {srcp}")
             continue
-        y, info = prepare_one(x, fs, mono, a.target_lufs, a.peak_dbfs)
+        x, fs = sf.read(str(srcp), always_2d=True)
+        if "segment" in o:
+            a0, a1 = o["segment"]
+            x = x[int(a0 * fs) : int(a1 * fs)]
+        y, info = prepare_one(
+            x, fs, o["mono"], a.target_lufs, a.peak_dbfs, o.get("loop", False),
+            0.2 if "segment" in o else 0.03,
+        )  # fmt: skip
         sf.write(str(dst / name), y, fs, subtype="PCM_16")
+        info["src"] = o["src"]
         report["sounds"][name] = info
         print(
-            f"{name:28s} {info['before']['lufs_m']:6.1f} → {info['after']['lufs_m']:6.1f} LUFS  "
+            f"{name:16s} {info['before']['lufs_m']:6.1f} → {info['after']['lufs_m']:6.1f} LUFS  "
             f"crête {info['after']['peak_dbfs']:5.1f} dBFS  {info['after']['dur_s']:.2f} s"
         )
     (dst / "levels.json").write_text(json.dumps(report, indent=2))

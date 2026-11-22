@@ -113,6 +113,10 @@ class GuidanceCue:
     distance: float = float("nan")
     alert_level: float = 0.0
     message: str = ""
+    # direction du chemin à suivre (rad, gauche +), même pendant une alerte obstacle ; nan si aucune
+    guide_azimuth: float = float("nan")
+    # obstacle à signaler dans le couloir frontal (m) ; inf si aucun (ou près de la cible)
+    obstacle_distance: float = float("inf")
 
 
 @dataclass
@@ -120,20 +124,20 @@ class SoundCommand:
     """Ce que le haut-parleur doit jouer, déduit d'une consigne (`audio.director`).
 
     Calculé une seule fois côté PC, puis rendu à l'identique par le téléphone (Web Audio) et
-    par le rendu hors ligne (WAV).
+    par le rendu hors ligne (WAV). Deux couches superposées : le chemin (note répétée, pan
+    stéréo) et les obstacles (nappe en boucle, volume selon la distance).
     """
 
     t: float
     frame_idx: int
     state: str
-    mode: str  # silent | search | guide | alert | arrived
-    azimuth: float = 0.0  # rad, positif à gauche (direction réelle)
-    azimuth_render: float = 0.0  # rad, après exagération des petits angles
+    mode: str  # silent | search | guide | lost | arrived (couche chemin)
+    azimuth: float = 0.0  # rad, positif à gauche (direction du chemin)
+    pan: float = 0.0  # −1 = tout à gauche, +1 = tout à droite (puissance constante)
     distance: float = float("nan")
-    interval_s: float = 1.0  # espacement entre deux notes du guide
-    gain_db: float = 0.0
-    lowpass_hz: float = 20000.0  # assourdissement quand l'objectif est derrière
-    back_gain_db: float = 0.0
+    interval_s: float = 1.0  # espacement entre deux notes du chemin
+    gain_db: float = 0.0  # gain de la note du chemin
+    obstacle_db: float = -120.0  # gain de la nappe obstacles (≤ −120 : muette)
     event: str = ""  # « arrived » : son d'arrivée à jouer une fois
 
 

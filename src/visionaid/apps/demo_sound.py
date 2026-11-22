@@ -2,7 +2,7 @@
 
 Pour chaque scénario (`sim.scenarios` : pièce, couloir, obstacle qui surgit), l'agent simulé suit
 les consignes ; on écrit la vidéo (vérité terrain à gauche, carte construite à droite, son joué en
-bas) et la piste binaurale produite par `AudioRenderer`, puis on les assemble.
+bas) et la piste stéréo produite par `AudioRenderer`, puis on les assemble.
 
 Sorties : `outputs/demo_sons/<scénario>_<graine>.mp4` (vidéo + son) et `.wav`.
 Écoute au casque. Pour la vidéo réelle de l'appartement, utiliser `run_offline` (qui écrit
@@ -27,9 +27,9 @@ from visionaid.utils.logging import get_logger
 log = get_logger("demo_sound")
 
 MODE_FR = {
-    "search": "recherche (note douce qui balaie)",
-    "guide": "guide",
-    "alert": "ALERTE : arrete-toi",
+    "search": "recherche",
+    "guide": "chemin",
+    "lost": "reperage perdu : arrete-toi",
     "arrived": "arrive",
     "silent": "silence",
 }
@@ -51,7 +51,11 @@ def caption(cmd) -> str:
         return f"Son : {m}, une note toutes les {cmd.interval_s:.2f} s"
     if cmd.mode == "guide":
         dist = f", objectif a {cmd.distance:.1f} m" if math.isfinite(cmd.distance) else ""
-        return f"Son : {m} - direction {_side(cmd.azimuth)}{dist}, une note toutes les {cmd.interval_s:.2f} s"
+        ob = ", OBSTACLE" if cmd.obstacle_db > -100 else ""
+        return (
+            f"Son : {m} - direction {_side(cmd.azimuth)}{dist}, "
+            f"une note toutes les {cmd.interval_s:.2f} s{ob}"
+        )
     return f"Son : {m}"
 
 

@@ -330,15 +330,10 @@ class PhoneServer:
         return {
             "sounds": {k: f"/sounds/{getattr(snd, k).file}" for k in SOUND_KEYS if hasattr(snd, k)},
             "gains_db": {k: float(getattr(snd, k).gain_db) for k in SOUND_KEYS if hasattr(snd, k)},
-            "guide_notes": int(a.guide_notes),
-            "guide_note_s": float(a.guide_note_s),
-            "fade_in_s": float(a.guide_fade_in_s),
-            "fade_out_s": float(a.guide_fade_out_s),
-            "halo_mix": float(a.halo_mix),
             "master_gain_db": float(a.master_gain_db),
-            "panning": "HRTF" if str(a.panning).lower() == "hrtf" else "equalpower",
             "smoothing_s": float(a.smoothing_s),
-            "alert_period_s": float(a.alert_period_s),
+            "obstacle_smoothing_s": float(a.obstacle_smoothing_s),
+            "lost_obstacle_db": float(a.lost_obstacle_db),
             "watchdog_s": float(a.watchdog_s),
         }
 
@@ -352,13 +347,12 @@ class PhoneServer:
             "t": float(cmd.t),
             "state": cmd.state,
             "mode": cmd.mode,
-            "az": round(float(cmd.azimuth_render), 4),
-            "az_raw": round(float(cmd.azimuth), 4),
+            "az": round(float(cmd.azimuth), 4),
+            "pan": round(float(cmd.pan), 4),
             "dist": float(cmd.distance) if np.isfinite(cmd.distance) else None,
             "interval": round(float(cmd.interval_s), 3),
             "gain_db": round(float(cmd.gain_db), 2),
-            "lowpass_hz": round(float(cmd.lowpass_hz), 1),
-            "back_gain_db": round(float(cmd.back_gain_db), 2),
+            "obstacle_db": round(float(cmd.obstacle_db), 2),
             "event": cmd.event,
         }
         asyncio.run_coroutine_threadsafe(self._send(ws, msg), loop)

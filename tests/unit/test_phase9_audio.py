@@ -95,7 +95,7 @@ def test_no_click_on_azimuth_jump():
 
 def test_guide_interval_shorter_when_closer():
     r = AudioRenderer(load_config().audio)
-    assert r.interval(0.5) < r.interval(2.0) < r.interval(10.0)
+    assert r.interval(0.5) < r.interval(1.5) < r.interval(10.0)
 
 
 def test_wav_duration(tmp_path):

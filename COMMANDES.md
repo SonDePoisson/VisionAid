@@ -68,6 +68,14 @@ open outputs/annotated_audio.mp4
 ```
 À écouter au casque. Le même rejeu produit aussi `outputs/session.rrd` (ancienne vue Rerun) et `outputs/guidance.wav`.
 
+### Rejeu du guidage sonore seul (réglage des sons)
+```bash
+uv run python -m visionaid.apps.render_sound data/sessions/<session> --video
+```
+Écrit dans `outputs/son/<session>/` : `guidage.wav` (au casque) et `camera_son.mp4` (image de la caméra + son, son joué écrit en bas). Le premier lancement rejoue la vision et garde les consignes dans `consignes.json` ; les suivants ne refont que le son, en quelques secondes : on change un réglage de la section `audio` de `config/default.yaml` et on réécoute. `--recompute` rejoue la vision (après un changement du guidage ou de la carte).
+
+Pour une session enregistrée sur un autre PC : copier son dossier `data/sessions/<date>_<nom>/` (avec `frames.jsonl`, `meta.json`, `imu.jsonl` et les images) dans `data/sessions/`.
+
 ### Résumé des sessions
 Durée, images/s, IMU, coupures :
 ```bash
@@ -133,11 +141,16 @@ uv run python -m visionaid.apps.demo_sound
 Écrit `outputs/demo_sons/{room_0,corridor_1,appearing_0}.mp4` : scénario simulé avec le son de guidage (à écouter au casque).
 
 ### Sons de guidage
-Sons d'origine dans `assets/sounds/`, versions préparées (silences coupés, volume égalisé) dans `assets/sounds/processed/`. Après avoir changé un son d'origine :
+Sons d'origine dans `assets/sounds/` (`VisionAid_Sounds 1` à `4`), versions préparées (mono, motif unique, volume égalisé, nappe bouclable) dans `assets/sounds/processed/`. Après avoir changé un son d'origine :
 ```bash
 uv run python -m visionaid.audio.prepare
 ```
-Réglages (espacement des notes, fondus, halo, exagération des angles…) : section `audio` de `config/default.yaml`.
+Deux couches superposées :
+- **chemin** (son 2 ; son 4 tant que l'objet n'est pas trouvé) : note répétée, pan stéréo vers le chemin (tout à gauche = 100 % oreille gauche, 0 % droite ; chemin derrière = tout du côté du demi-tour le plus court). Le tempo accélère sous 2 m de la cible ;
+- **obstacles** (son 1) : nappe en boucle, de plus en plus forte entre 1,5 m et 0,4 m, toujours sous le chemin ;
+- **arrivée** (son 3) : une fois, puis silence. Repérage perdu : plus de chemin, nappe à volume moyen.
+
+Réglages (tempo, distances, volumes des obstacles, hystérésis derrière…) : section `audio` de `config/default.yaml`.
 
 ---
 

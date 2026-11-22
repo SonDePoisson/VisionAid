@@ -61,6 +61,8 @@ def test_roundtrip(msg):
         a, b = getattr(msg, f.name), getattr(back, f.name)
         if isinstance(a, np.ndarray):
             assert isinstance(b, np.ndarray) and a.dtype == b.dtype and np.array_equal(a, b)
+        elif isinstance(a, float) and np.isnan(a):
+            assert np.isnan(b)
         else:
             assert a == b
 
