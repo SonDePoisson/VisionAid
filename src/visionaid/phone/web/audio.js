@@ -4,7 +4,9 @@
 // - chemin : note répétée (son 2, ou son 4 en recherche), placée par un pan stéréo
 //   (StereoPannerNode, puissance constante : pan −1 = tout à gauche, rien à droite) ;
 // - obstacles : nappe du son 1 en boucle, superposée, volume selon la distance ;
-// - arrivée : son 3, une fois.
+// - arrivée : son 3, une fois ;
+// - phrases (messages « speech ») : synthèse vocale du navigateur (speechSynthesis) ; pendant une
+//   phrase « duck » (objet trouvé), la couche chemin est suspendue, les obstacles restent.
 "use strict";
 
 class GuideAudio {
@@ -22,6 +24,10 @@ class GuideAudio {
     this.timer = null;
     this.userDb = 0;
     this.onStatus = () => {};
+    this.voiceLang = "fr-FR";
+    this.voiceRate = 1;
+    this.duckUntil = 0; // performance.now() : couche chemin suspendue jusqu'à cet instant
+    this.speaking = 0; // phrases « duck » en cours
     try { this.userDb = +(localStorage.getItem("visionaid.volume_db") || 0); } catch (e) { /* stockage indisponible */ }
   }
 
@@ -45,6 +51,15 @@ class GuideAudio {
       this.obGain.connect(this.master);
     }
     this.ctx.resume();
+    // iOS : la synthèse vocale aussi se déverrouille dans un geste de l'utilisateur
+    try {
+      if (!this.speechUnlocked && window.speechSynthesis) {
+        const u = new SpeechSynthesisUtterance(" ");
+        u.volume = 0;
+        window.speechSynthesis.speak(u);
+        this.speechUnlocked = true;
+      }
+    } catch (e) { /* pas de synthèse vocale */ }
     // tampon silencieux : finit de déverrouiller la sortie audio sur iOS
     const b = this.ctx.createBuffer(1, 1, this.ctx.sampleRate), s = this.ctx.createBufferSource();
     s.buffer = b; s.connect(this.ctx.destination); s.start();
@@ -93,6 +108,52 @@ class GuideAudio {
     if (m.event === "arrived") this._play("arrived", this.master, this.ctx.currentTime + 0.02);
     if (m.mode === "guide" || m.mode === "search") this._setPan(m.pan || 0, false);
     this._setObstacle(m.obstacle_db ?? -120);
+  }
+
+  resume() { if (this.ctx) this.ctx.resume(); }
+
+  // Phrase dite dans le casque. `duck` : chemin suspendu jusqu'à la fin de la phrase.
+  speak(text, duck) {
+    const ss = window.speechSynthesis;
+    if (!ss || !text) return;
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = this.voiceLang || "fr-FR";
+    u.rate = this.voiceRate || 1;
+    const voices = ss.getVoices ? ss.getVoices() : [];
+    const lang = u.lang.toLowerCase();
+    const v = voices.find((x) => x.lang && x.lang.toLowerCase() === lang && x.localService)
+      || voices.find((x) => x.lang && x.lang.toLowerCase().startsWith(lang.slice(0, 2)));
+    if (v) u.voice = v;
+    if (duck) {
+      this.speaking += 1;
+      // garde-fou : jamais plus que la durée probable de la phrase (≈ 14 caractères/s) + 3 s
+      this.duckUntil = Math.max(this.duckUntil, performance.now() + (text.length / 14) * 1000 / u.rate + 3000);
+      const end = () => {
+        this.speaking = Math.max(0, this.speaking - 1);
+        if (!this.speaking) this.duckUntil = performance.now() + 300;
+      };
+      u.onend = end; u.onerror = end;
+    }
+    this.resume();
+    ss.speak(u); // à la suite des phrases déjà en cours
+  }
+
+  cancelSpeech() {
+    try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) { /* rien */ }
+    this.speaking = 0; this.duckUntil = 0;
+  }
+
+  // Bip court : « parle maintenant ».
+  beep() {
+    if (!this.ctx) return;
+    const c = this.ctx, o = c.createOscillator(), g = c.createGain(), t = c.currentTime + 0.01;
+    o.frequency.value = 880;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.25, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    o.connect(g); g.connect(this.master || c.destination);
+    o.start(t); o.stop(t + 0.2);
+    o.onended = () => { o.disconnect(); g.disconnect(); };
   }
 
   setVolume(db) {
@@ -166,7 +227,8 @@ class GuideAudio {
       mode = "lost";
       if (this.prevMode !== "lost") this._setObstacle(this.cfg.lost_obstacle_db);
     }
-    if (mode === "guide" || mode === "search") {
+    const ducked = performance.now() < this.duckUntil;
+    if ((mode === "guide" || mode === "search") && !ducked) {
       // nouveau rythme dès le passage recherche ↔ chemin
       if (mode !== this.prevMode || this.next < now) this.next = now + 0.02;
       const key = mode === "search" && this.buffers.search ? "search" : "guide";
@@ -175,7 +237,7 @@ class GuideAudio {
         this.next += Math.max(0.2, this.cmd.interval || 1);
       }
     }
-    this.prevMode = mode;
+    this.prevMode = ducked ? "silent" : mode; // fin de phrase : le rythme repart aussitôt
   }
 }
 

@@ -117,7 +117,15 @@ def frontal_obstacle(
 class GuidanceEngine:
     """Combine pose, objet, chemin et costmap en une consigne `GuidanceCue`."""
 
-    def __init__(self, cfg) -> None:
+    def __init__(
+        self,
+        cfg,
+        spoken: str = "",
+        plural: bool | None = None,
+        announce_start: bool = True,
+        target_id: int = 0,
+        speech=None,
+    ) -> None:
         g = cfg.guidance
         self.sm = GuidanceStateMachine(g)
         # tête = torse (hypothèse du hackathon) : `body.T_cam_body` prime sur `guidance.T_cam_head`
@@ -150,6 +158,15 @@ class GuidanceEngine:
         self.dir_safe_m = float(getattr(g, "direction_safe_m", 1.0) or 0.0)
         self.n_dir_snaps = 0
         self._t_bearing = -math.inf
+        # annonces vocales (objet trouvé, approche) ; meubles fournis par le modèle du monde
+        from visionaid.guidance.narration import Narrator
+
+        tgt = getattr(cfg, "target", None)
+        if plural is None:
+            plural = bool(getattr(tgt, "plural", False)) if tgt is not None else False
+        self.narrator = Narrator(cfg, spoken, plural, announce_start, speech)
+        self.landmarks = None
+        self.target_id = int(target_id)
 
     def smooth_bearing(self, t: float, bearing: float) -> float:
         """Direction monde lissée (passe-bas `direction_tau_s`, puis au plus
@@ -163,9 +180,7 @@ class GuidanceEngine:
                 d *= 1.0 - math.exp(-dt / self.dir_tau)
             if self.dir_rate > 0:
                 d = float(np.clip(d, -self.dir_rate * dt, self.dir_rate * dt))
-            self._bearing = math.atan2(
-                math.sin(self._bearing + d), math.cos(self._bearing + d)
-            )
+            self._bearing = math.atan2(math.sin(self._bearing + d), math.cos(self._bearing + d))
         self._t_bearing = t
         return self._bearing
 
@@ -190,6 +205,10 @@ class GuidanceEngine:
         path: Path | None,
         cm: Costmap | None,
     ) -> GuidanceCue:
+        if obj is not None and getattr(obj, "target_id", 0) != self.target_id:
+            obj = None  # objet d'une demande précédente
+        if path is not None and getattr(path, "target_id", 0) != self.target_id:
+            path = None
         lost = pose is None or pose.quality == "lost"
         T_head = None if pose is None else pose.T_world_cam @ self.T_cam_head
         known = obj is not None and obj.state != "unknown" and np.isfinite(obj.position).all()
@@ -258,6 +277,8 @@ class GuidanceEngine:
         # obstacle à signaler par le son : objet connu et pas encore tout près (le meuble qui
         # porte la cible n'est pas un obstacle), même règle que l'alerte
         obst_report = obst_d if known and dist >= self.approach_m else math.inf
+        self.narrator.update(t, state, T_head, obj, path, cm, self.landmarks, dist, obst_d)
+        speech, speech_id, duck = self.narrator.current(t)
         return GuidanceCue(
             t,
             frame_idx,
@@ -269,6 +290,9 @@ class GuidanceEngine:
             self.voice(t, state),
             float(guide_az),
             float(obst_report),
+            speech,
+            speech_id,
+            duck,
         )
 
     def _guide_direction(

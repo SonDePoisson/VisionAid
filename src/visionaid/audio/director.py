@@ -139,4 +139,7 @@ class SoundDirector:
             gain_db=0.0,
             obstacle_db=float(ob),
             event=event,
+            speech=str(getattr(cue, "speech", "") or ""),
+            speech_id=int(getattr(cue, "speech_id", 0) or 0),
+            speech_duck=bool(getattr(cue, "speech_duck", False)),
         )

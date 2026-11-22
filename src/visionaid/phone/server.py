@@ -51,6 +51,8 @@ class ServerStats:
     n_imu: int = 0
     n_bad: int = 0
     n_sound: int = 0
+    n_speech: int = 0
+    n_command: int = 0
     frame_ages: deque = field(default_factory=lambda: deque(maxlen=2000))
     frame_times: deque = field(default_factory=lambda: deque(maxlen=200))
     imu_times: deque = field(default_factory=lambda: deque(maxlen=2000))
@@ -71,6 +73,8 @@ class ServerStats:
             "n_imu": self.n_imu,
             "n_bad": self.n_bad,
             "n_sound": self.n_sound,
+            "n_speech": self.n_speech,
+            "n_command": self.n_command,
             "frame_age_ms_p50": float(np.percentile(ages, 50) * 1e3) if len(ages) else None,
             "frame_age_ms_p95": float(np.percentile(ages, 95) * 1e3) if len(ages) else None,
         }
@@ -85,6 +89,7 @@ class PhoneServer:
         on_frame: Callable[[Frame], None] | None = None,
         on_imu: Callable[[ImuBatch], None] | None = None,
         on_clock: Callable[[ClockSync], None] | None = None,
+        on_command: Callable[[dict], None] | None = None,
         record: str | None = None,
         https_port: int | None = None,
         http_port: int | None = None,
@@ -101,6 +106,8 @@ class PhoneServer:
         self.on_frame = on_frame
         self.on_imu = on_imu
         self.on_clock = on_clock
+        self.on_command = on_command
+        self.voice: dict | None = None  # réglages voix envoyés au téléphone (welcome)
         self.record_name = record
         self.meta = dict(meta or {})
         self.recorder: SessionRecorder | None = None
@@ -359,9 +366,25 @@ class PhoneServer:
         self.stats.n_sound += 1
         return True
 
+    def send_json(self, obj: dict) -> bool:
+        """Envoie un message JSON au téléphone (appelable depuis n'importe quel thread)."""
+        ws, loop = self._ws, self._loop
+        if ws is None or ws.closed or loop is None:
+            return False
+        asyncio.run_coroutine_threadsafe(self._send(ws, obj), loop)
+        return True
+
+    def send_speech(self, sid: int, text: str, duck: bool = False) -> bool:
+        """Phrase à dire par le téléphone (synthèse vocale du navigateur, dans le casque)."""
+        ok = self.send_json({"type": "speech", "id": int(sid), "text": text, "duck": bool(duck)})
+        if ok:
+            self.stats.n_speech += 1
+        return ok
+
     def _welcome(self) -> dict:
         pc = self.cfg.phone
         return {
+            "voice": self.voice,
             "audio": self._audio_settings(),
             "type": "welcome",
             "protocol": PROTOCOL_VERSION,
@@ -422,6 +445,12 @@ class PhoneServer:
                 self.on_clock(c)
         elif typ == "bye":
             await ws.close()
+        elif typ in ("command", "command_audio"):
+            if self.recorder is not None and typ == "command":
+                self.recorder.update_meta(last_command=str(obj.get("text", ""))[:200])
+            self.stats.n_command += 1
+            if self.on_command is not None:
+                self.on_command(obj)
         elif typ == "notes" and self.recorder is not None:
             self.recorder.update_meta(notes=str(obj.get("text", ""))[:2000])
         else:

@@ -4,7 +4,9 @@ Exécute les `SoundCommand` de `audio.director` exactement comme le téléphone 
 - chemin : note du son 2 (ou son 4 en recherche) répétée tous les `interval_s`, placée par un
   pan stéréo à puissance constante (pan −1 : tout à gauche, rien à droite) ;
 - obstacles : nappe du son 1 en boucle, superposée, gain `obstacle_db` lissé ;
-- arrivée : son 3 joué une fois, centré.
+- arrivée : son 3 joué une fois, centré ;
+- phrases (annonces) : synthèse macOS `say`, centrées, l'une après l'autre ; pendant une phrase
+  « duck » (objet trouvé) la couche chemin est suspendue, comme sur le téléphone.
 """
 
 from __future__ import annotations
@@ -54,8 +56,11 @@ def _smooth(x: np.ndarray, fs: int, tau: float) -> np.ndarray:
 class AudioRenderer:
     """Convertit une suite de consignes horodatées en piste stéréo synchronisée."""
 
-    def __init__(self, cfg_audio) -> None:
+    def __init__(self, cfg_audio, cfg_tts=None, cache_dir=None) -> None:
         a = cfg_audio
+        self.tts = cfg_tts
+        self.tts_cache = cache_dir
+        self.speeches: list[tuple[float, float, str]] = []  # (début, fin, texte) du dernier rendu
         self.cfg = a
         self.fs = int(a.sample_rate)
         self.tau = float(a.smoothing_s)
@@ -123,6 +128,10 @@ class AudioRenderer:
                 next_note = None
             if c.event == "arrived":
                 self._add(center, int(round((ta - t0) * fs)), self.sounds["arrived"].mean(axis=1))
+        speech, duck = self._speech(cmds, t0, n)
+        if duck is not None:
+            notes *= _smooth(duck, fs, 0.03)
+        center += speech
         # pan et volume lissés : aucun clic aux changements
         gl, gr = equal_power(_smooth(pan, fs, self.tau))
         st = np.stack([notes * gl, notes * gr], axis=1)
@@ -137,6 +146,43 @@ class AudioRenderer:
             log.warning("Piste trop forte (crête %.2f) : ramenée à 0,98", peak)
             st *= 0.98 / peak
         return st.astype(np.float32)
+
+    def _speech(self, cmds: list[SoundCommand], t0: float, n: int):
+        """Piste des phrases (mono) et gain de la couche chemin (0 pendant une phrase « duck »)."""
+        fs = self.fs
+        out = np.zeros(n)
+        self.speeches = []
+        seen: set[int] = set()
+        items = []
+        for c in cmds:
+            sid = int(getattr(c, "speech_id", 0) or 0)
+            if sid and sid not in seen and getattr(c, "speech", ""):
+                seen.add(sid)
+                items.append((c.t, c.speech, bool(getattr(c, "speech_duck", False))))
+        if not items:
+            return out, None
+        output = str(getattr(self.tts, "output", "auto")) if self.tts is not None else "auto"
+        if output == "off":
+            return out, None
+        from visionaid.audio import tts
+
+        voice = str(getattr(self.tts, "mac_voice", "Thomas")) if self.tts is not None else "Thomas"
+        wpm = int(getattr(self.tts, "mac_rate_wpm", 190)) if self.tts is not None else 190
+        cache = Path(self.tts_cache) if self.tts_cache is not None else None
+        duck = np.ones(n)
+        t_free = -math.inf
+        for t, text, dk in items:
+            x = tts.synth(text, fs, voice, wpm, cache)
+            dur = len(x) / fs if x is not None else 0.08 * len(text)
+            start = max(t, t_free)  # phrases à la suite, jamais superposées
+            t_free = start + dur + 0.3
+            self.speeches.append((start, start + dur, text))
+            i = int(round((start - t0) * fs))
+            if x is not None:
+                self._add(out, i, x)
+            if dk:
+                duck[max(i, 0) : max(min(i + int((dur + 0.3) * fs), n), 0)] = 0.0
+        return out, duck
 
     def write_wav(self, path: str | Path, stereo: np.ndarray) -> None:
         import soundfile as sf

@@ -104,8 +104,9 @@ def replay(session_dir, cfg=None, cloud_every: int = 2, with_audio: bool = False
     if not with_audio:
         return out, float(src.fps)
     from visionaid.audio.renderer import AudioRenderer
+    from visionaid.utils.config import resolve_path
 
-    ar = AudioRenderer(cfg.audio)
+    ar = AudioRenderer(cfg.audio, getattr(cfg, "tts", None), resolve_path(cfg.paths.cache) / "tts")
     t_first = pipe.records[0].t if pipe.records else 0.0
     duration = len(out) / float(src.fps)
     stereo = ar.render(pipe.cues, t_first, duration)

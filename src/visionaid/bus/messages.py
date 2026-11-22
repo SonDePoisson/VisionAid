@@ -62,6 +62,7 @@ class Detections:
     target_idx: int = -1  # index de la détection confirmée comme cible, -1 sinon
     target_track_id: int = -1
     candidate_idx: int = -1  # cible « probable » (non confirmée), -1 sinon
+    target_id: int = 0  # numéro de la demande (commande vocale) pour laquelle la cible est cherchée
 
 
 @dataclass
@@ -74,6 +75,7 @@ class ObjectEstimate:
     cov: np.ndarray  # (3,3)
     state: str = "unknown"  # unknown | seen | remembered | stale
     confidence: float = 0.0
+    target_id: int = 0  # numéro de la demande (commande vocale) concernée
 
 
 @dataclass
@@ -99,6 +101,7 @@ class Path:
     goal: np.ndarray  # (2,)
     valid: bool = False
     length: float = 0.0
+    target_id: int = 0  # numéro de la demande (commande vocale) concernée
 
 
 @dataclass
@@ -117,6 +120,10 @@ class GuidanceCue:
     guide_azimuth: float = float("nan")
     # obstacle à signaler dans le couloir frontal (m) ; inf si aucun (ou près de la cible)
     obstacle_distance: float = float("inf")
+    # phrase à dire (synthèse vocale) : répétée sur les consignes pendant ~1 s, même `speech_id`
+    speech: str = ""
+    speech_id: int = 0
+    speech_duck: bool = False  # couche chemin suspendue pendant la phrase
 
 
 @dataclass
@@ -139,6 +146,9 @@ class SoundCommand:
     gain_db: float = 0.0  # gain de la note du chemin
     obstacle_db: float = -120.0  # gain de la nappe obstacles (≤ −120 : muette)
     event: str = ""  # « arrived » : son d'arrivée à jouer une fois
+    speech: str = ""  # phrase à dire (une fois par `speech_id`)
+    speech_id: int = 0
+    speech_duck: bool = False  # chemin suspendu pendant la phrase (annonce de l'objet trouvé)
 
 
 @dataclass
@@ -192,6 +202,37 @@ class ClockSync:
     rtt: float = 0.0
 
 
+@dataclass
+class VoiceCommand:
+    """Demande de l'utilisateur (voix ou prompt fixe) : chercher un objet, ou arrêter.
+
+    `id` croît à chaque nouvelle recherche ou arrêt : les blocs repartent de zéro quand il change.
+    Une phrase incomprise garde l'`id` courant (rien ne change) mais a un nouveau `seq`.
+    """
+
+    t: float  # time.time() de la demande
+    id: int
+    action: str  # search | stop | unknown
+    text: str = ""  # phrase reconnue
+    query: str = ""  # phrase passée à la fiche cible
+    target: str = ""  # nom de la fiche (config/targets/<nom>.yaml)
+    spoken: str = ""  # nom à prononcer (« la gourde »)
+    plural: bool = False
+    seq: int = 0  # numéro de la phrase reçue (chaque phrase, même incomprise)
+
+
+@dataclass
+class Landmarks:
+    """Meubles repérés (repère monde aligné, z haut) pour décrire où est l'objet."""
+
+    t: float
+    labels: list[str]  # prompt anglais du détecteur (« table », « sofa »…)
+    centers: np.ndarray  # (N,2) x, y
+    boxes: np.ndarray  # (N,4) xmin, ymin, xmax, ymax (emprise au sol)
+    top_z: np.ndarray  # (N,) hauteur du dessus (m)
+    n_obs: np.ndarray  # (N,) nombre d'observations
+
+
 MESSAGE_TYPES: dict[str, type] = {
     c.__name__: c
     for c in (
@@ -207,6 +248,8 @@ MESSAGE_TYPES: dict[str, type] = {
         ImuSample,
         ImuBatch,
         ClockSync,
+        VoiceCommand,
+        Landmarks,
     )
 }
 

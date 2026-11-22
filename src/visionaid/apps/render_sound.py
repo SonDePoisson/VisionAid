@@ -149,7 +149,8 @@ def main(argv=None) -> dict:
     out = resolve_path(args.out or f"outputs/son/{name}")
     data = load_or_compute(args.session, out, args.recompute)
     cues = [GuidanceCue(**c) for c in data["cues"]]
-    ar = AudioRenderer(load_config().audio)
+    cfg = load_config()
+    ar = AudioRenderer(cfg.audio, getattr(cfg, "tts", None), resolve_path(cfg.paths.cache) / "tts")
     stereo = ar.render(cues, data["t0"], data["duration"])
     wav = out / "guidage.wav"
     ar.write_wav(wav, stereo)

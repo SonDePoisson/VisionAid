@@ -43,6 +43,29 @@ uv run python -m visionaid.apps.run_phone --record cles_essai2 --target "où son
 | `--duration 60` | arrêt automatique après 60 s |
 | `--depth-width 364` | profondeur plus rapide (−35 % de latence), mais guidage moins précis |
 
+### Demande à la voix (« je cherche ma gourde »)
+```bash
+uv run python -m visionaid.apps.run_live --command stt --height 150 --rerun live
+```
+Sans `--target`, le mode voix est choisi tout seul. Sur l'iPhone, après **Démarrer**, la page dit « Appuie sur le grand bouton Parler… ». Appuie sur **🎤 Parler** (bip), dis « je cherche ma gourde » ou « où sont mes clés » : l'enregistrement s'arrête seul après la phrase (ou réappuie). Le PC transcrit (Whisper, ~0,6 s) puis :
+1. « Je cherche la gourde. Tourne lentement sur toi-même. », puis le son de recherche ;
+2. objet trouvé : le son du chemin se tait le temps d'une phrase qui dit où il est et le trajet (« La gourde est au fond de la pièce, en face de toi, à environ 4 mètres, derrière le canapé, sur la table. Le chemin contourne le canapé par la gauche, suis le son. ») ;
+3. guidage par le son du chemin seul ;
+4. près du meuble qui porte l'objet (ou à moins de 1,6 m) : « Tu arrives vers la table, la gourde sera légèrement sur ta gauche. », le son du chemin continue jusqu'au son d'arrivée.
+
+Autres demandes : « stop » / « arrête » (silence), une nouvelle demande à tout moment (« je cherche mes clés »). Phrase incomprise : « Je n'ai pas compris… Tu peux chercher tes clés ou ta gourde. », la recherche en cours continue. Le champ « ou écrire » de la page envoie la demande au clavier (tests).
+
+| Option | Effet |
+|---|---|
+| `--command prompt --target "…"` | objet fixé au lancement (comme avant) ; les annonces vocales sont aussi faites |
+| `--command stt` | l'utilisateur dit ce qu'il cherche (bouton Parler) |
+| `--stt whisper` | (défaut) le téléphone enregistre, le PC transcrit. Premier lancement : téléchargement du modèle (~1 Go) |
+| `--stt phone` | reconnaissance vocale de Safari (Siri et Dictée activés) ; repli sur Whisper en cas d'échec |
+| `--tts auto` | (défaut) voix dans le casque du téléphone en direct, sur le haut-parleur du Mac en rejeu |
+| `--tts mac` / `--tts off` | voix sur le Mac / aucune voix |
+
+Au démarrage en mode voix, la reconnaissance de chaque objet (fiches `config/targets/`) est préparée (~10 s de plus). Les meubles (table, canapé, chaise, lit, étagère…) sont détectés en même temps que l'objet et servent aux phrases ; ils apparaissent en violet dans la vue Monde 3D (`world/meubles`). Les phrases dites s'affichent dans Rerun (`status`, « voix : … ») et dans le journal.
+
 ---
 
 ## 2. Rejouer une vidéo déjà tournée (session enregistrée)
@@ -56,7 +79,7 @@ ls data/sessions
 ```bash
 uv run python -m visionaid.apps.run_live --session data/sessions/20261121-140325_gourde_piece --rerun live
 ```
-L'iPhone n'est pas utilisé. La session repart en boucle à la fin. L'objet recherché est repris automatiquement de la session.
+L'iPhone n'est pas utilisé. La session repart en boucle à la fin. L'objet recherché est repris automatiquement de la session. Les annonces vocales sont dites par le haut-parleur du Mac (`--tts off` pour les couper).
 
 ### Rejeu hors ligne → vidéo annotée avec le son de guidage
 ```bash
@@ -66,13 +89,13 @@ Puis :
 ```bash
 open outputs/annotated_audio.mp4
 ```
-À écouter au casque. Le même rejeu produit aussi `outputs/session.rrd` (ancienne vue Rerun) et `outputs/guidance.wav`.
+À écouter au casque : les annonces vocales y sont mélangées (voix `Thomas` de macOS, `tts.mac_voice`). Le même rejeu produit aussi `outputs/session.rrd` (ancienne vue Rerun) et `outputs/guidance.wav`.
 
 ### Rejeu du guidage sonore seul (réglage des sons)
 ```bash
 uv run python -m visionaid.apps.render_sound data/sessions/<session> --video
 ```
-Écrit dans `outputs/son/<session>/` : `guidage.wav` (au casque) et `camera_son.mp4` (image de la caméra + son, son joué écrit en bas). Le premier lancement rejoue la vision et garde les consignes dans `consignes.json` ; les suivants ne refont que le son, en quelques secondes : on change un réglage de la section `audio` de `config/default.yaml` et on réécoute. `--recompute` rejoue la vision (après un changement du guidage ou de la carte).
+Écrit dans `outputs/son/<session>/` : `guidage.wav` (au casque) et `camera_son.mp4` (image de la caméra + son, son joué écrit en bas). Le premier lancement rejoue la vision et garde les consignes dans `consignes.json` ; les suivants ne refont que le son, en quelques secondes : on change un réglage de la section `audio` de `config/default.yaml` et on réécoute. `--recompute` rejoue la vision (après un changement du guidage ou de la carte ; nécessaire une fois pour avoir les annonces vocales dans une session déjà calculée).
 
 Pour une session enregistrée sur un autre PC : copier son dossier `data/sessions/<date>_<nom>/` (avec `frames.jsonl`, `meta.json`, `imu.jsonl` et les images) dans `data/sessions/`.
 

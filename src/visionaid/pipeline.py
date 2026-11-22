@@ -56,6 +56,7 @@ class OfflinePipeline:
         self.path = None
         self.cues: list[GuidanceCue] = []
         self.records: list[FrameRecord] = []
+        self._t_landmarks = -math.inf
 
     def step(self, frame: Frame, dets: Detections | None = None) -> dict:
         st = self.stats
@@ -73,8 +74,14 @@ class OfflinePipeline:
             if hasattr(self.vo, "correct_depth"):
                 depth = self.vo.correct_depth(frame, depth)
             pose = self.vo.update(frame, depth)
+        # meubles détectés avec la cible (même passe YOLOE ; rangés sur les détections)
+        furniture = getattr(dets, "_furniture", None) if dets is not None else None
         with Timer(st, "mapping"):
-            cm, obj = self.world.update(frame, depth, pose, dets)
+            cm, obj = self.world.update(frame, depth, pose, dets, furniture)
+        lm = self.world.landmarks
+        if lm is not None and frame.t - self._t_landmarks >= 0.5:
+            self._t_landmarks = frame.t
+            self.engine.landmarks = lm.to_msg(frame.t)
         pose_w = None
         if self.world.T_world_cam is not None:
             pose_w = Pose(

@@ -117,6 +117,36 @@ class YoloDetector:
             )
         self.model = m
 
+    def set_prompts(self, prompts: list[str]) -> bool:
+        """Change le vocabulaire (YOLOE / YOLO-World) ; False si le modèle ne le permet pas.
+
+        Le score de chaque classe ne dépend que de son propre texte et la suppression des
+        doublons est faite classe par classe : ajouter des classes (meubles) ne change pas les
+        détections des classes déjà présentes (vérifié sur les photos de référence).
+        """
+        if self.backend not in ("yoloe26", "yoloe11", "yoloworld"):
+            return False
+        prompts = list(prompts)
+        if prompts == self.labels:
+            return True
+        with _in_dir(self.weights_dir):
+            if self.backend in ("yoloe26", "yoloe11"):
+                # plongements texte gardés par prompt : changer de cible ne les recalcule pas
+                import torch
+
+                cache = self.__dict__.setdefault("_pe", {})
+                missing = [p for p in prompts if p not in cache]
+                if missing:
+                    pe = self.model.get_text_pe(missing)
+                    for k, p in enumerate(missing):
+                        cache[p] = pe[:, k : k + 1]
+                self.model.set_classes(prompts, torch.cat([cache[p] for p in prompts], dim=1))
+            else:
+                self.model.set_classes(prompts)
+        self.prompts = list(prompts)
+        self.labels = list(prompts)
+        return True
+
     def detect(self, image: np.ndarray, t: float = 0.0, frame_idx: int = 0) -> Detections:
         r = self.model.predict(
             image,

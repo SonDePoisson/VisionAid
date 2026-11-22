@@ -10,6 +10,8 @@ paths:
 
 target:
   name: gourde
+  spoken: la gourde       # nom prononcé dans les annonces (remplacé par la fiche cible)
+  plural: false
   height_m: 0.25          # hauteur réelle de la gourde (contrôle d'échelle)
   query: null             # prompt fixe (« où sont mes clés ») ; résolu via config/targets/*.yaml
   sheets_dir: config/targets
@@ -220,6 +222,48 @@ audio:
   master_gain_db: 0
   watchdog_s: 1.5             # téléphone : sans consigne depuis ce délai → repérage perdu
   sample_rate: 44100          # rendu hors ligne (WAV)
+
+# ---------------------------------------------------------------- voix : demande et annonces
+command:
+  mode: prompt            # prompt (phrase fixe, --target) | stt (l'utilisateur dit ce qu'il cherche)
+  stt: whisper            # whisper (son enregistré par le téléphone, transcrit sur le PC) | phone (reconnaissance de Safari)
+  whisper_model: openai/whisper-small   # ~1 Go, téléchargé au premier usage
+  language: fr
+  max_record_s: 6.0       # enregistrement de la demande sur le téléphone : durée maximale
+  repeat_s: 1.0           # la demande en cours est republiée sur le bus (nœuds lents à démarrer)
+
+tts:
+  output: auto            # auto (téléphone en direct, haut-parleur du Mac en rejeu) | phone | mac | off
+  lang: fr-FR
+  rate: 1.05              # débit de la voix du téléphone (1 = normal)
+  mac_voice: Thomas       # voix française de macOS (`say -v '?' | grep fr_`) : rejeu et rendu hors ligne
+  mac_rate_wpm: 190
+  hold_s: 1.0             # une phrase reste sur les consignes pendant ce délai (pertes de messages)
+
+landmarks:
+  enabled: true           # meubles détectés en même temps que la cible (même passe YOLOE)
+  prompts: ["table", "coffee table", "desk", "sofa", "armchair", "chair", "bed", "shelf",
+            "cabinet", "kitchen counter", "door", "television"]
+  min_conf: 0.35          # confiance minimale d'un meuble
+  publish_hz: 3.0         # meubles envoyés au modèle du monde au plus 3 fois par seconde
+  pixel_step: 4
+  max_range_m: 4.5        # profondeur fiable
+  min_points: 40
+  merge_m: 0.6            # même meuble : centres à moins de 0,6 m (ou emprises qui se recouvrent)
+  ema: 0.3
+  min_obs: 3              # meuble annoncé après 3 observations
+  max_count: 40
+
+narration:
+  enabled: true
+  wait_path_s: 2.5        # objet trouvé : attend un chemin (au plus 2,5 s) pour décrire le trajet
+  far_m: 3.0              # au-delà : « au fond de la pièce »
+  approach_m: 1.6         # annonce d'approche : objet à moins de 1,6 m…
+  approach_support_m: 1.0 # … ou meuble porteur à moins de 1 m (objet à moins de 2,5 m)
+  approach_max_m: 2.5
+  moved_m: 1.0            # objet déplacé de plus de 1 m depuis l'annonce : nouvelle annonce
+  support_margin_m: 0.15  # l'objet est « sur » un meuble si son emprise (+ marge) le contient
+  near_m: 0.8             # sinon « près de » le meuble le plus proche à moins de 0,8 m
 
 sim:
   dt: 0.1

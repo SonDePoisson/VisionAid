@@ -37,6 +37,8 @@ class TargetSheet:
     overrides: dict
     path: Path
     keys: set[str] = field(default_factory=set)
+    spoken: str = ""  # nom prononcé dans les annonces (« la gourde »)
+    plural: bool = False
 
 
 def normalize(text: str) -> str:
@@ -58,6 +60,15 @@ def content_words(text: str) -> tuple[str, ...]:
     return tuple(out)
 
 
+def spoken_from_label(label: str) -> str:
+    """« ma gourde » → « la gourde », « mes clés » → « les clés » (nom prononcé par défaut)."""
+    w = label.strip().split(" ", 1)
+    art = {"ma": "la", "mon": "le", "mes": "les", "ta": "la", "ton": "le", "tes": "les"}
+    if len(w) == 2 and w[0].lower() in art:
+        return f"{art[w[0].lower()]} {w[1]}"
+    return label
+
+
 def load_sheets(directory: str | Path | None = None) -> list[TargetSheet]:
     """Toutes les fiches du dossier, triées par nom."""
     d = resolve_path(directory or "config/targets")
@@ -68,8 +79,18 @@ def load_sheets(directory: str | Path | None = None) -> list[TargetSheet]:
         phrases = [str(x) for x in y.get("phrases", [])] + [name]
         keys = {" ".join(content_words(x)) for x in phrases}
         keys.discard("")
+        label = str(y.get("label", name))
         sheets.append(
-            TargetSheet(name, str(y.get("label", name)), phrases, y.get("overrides", {}), p, keys)
+            TargetSheet(
+                name,
+                label,
+                phrases,
+                y.get("overrides", {}),
+                p,
+                keys,
+                str(y.get("spoken") or spoken_from_label(label)),
+                bool(y.get("plural", False)),
+            )
         )
     return sheets
 
@@ -101,6 +122,8 @@ def apply_target(raw: dict, query: str | None) -> dict:
     raw["target"]["query"] = q
     raw["target"]["name"] = sheet.name
     raw["target"]["label"] = sheet.label
+    raw["target"]["spoken"] = sheet.spoken
+    raw["target"]["plural"] = sheet.plural
     return raw
 
 
@@ -111,3 +134,68 @@ def load_config_for_target(query: str | None, path=None, overrides: dict | None 
     ov = dict(overrides or {})
     ov["target.query"] = query
     return load_config(path, ov)
+
+
+# ------------------------------------------------------------------ commandes vocales
+STOP_WORDS = {"stop", "arrete", "arreter", "arretes", "termine", "fini", "annule", "annuler"}
+STOP_PHRASES = ("c est bon", "j ai trouve", "laisse tomber")
+
+
+def parse_command(texts, directory: str | Path | None = None) -> tuple[str, TargetSheet | None]:
+    """Phrase(s) reconnue(s) → (action, fiche). Action : `search`, `stop` ou `unknown`.
+
+    Plusieurs transcriptions possibles (alternatives de la reconnaissance vocale) : la première
+    qui désigne une fiche l'emporte. « Stop », « arrête », « j'ai trouvé » : fin de la recherche.
+    """
+    if isinstance(texts, str):
+        texts = [texts]
+    texts = [t for t in texts if t and t.strip()]
+    for t in texts:
+        try:
+            return "search", resolve_target(t, directory)
+        except UnknownTarget:
+            pass
+    for t in texts:
+        n = normalize(t)
+        if set(n.split()) & STOP_WORDS or any(p in n for p in STOP_PHRASES):
+            return "stop", None
+    return "unknown", None
+
+
+def target_raw(raw: dict, query: str) -> dict:
+    """Config brute pour la cible `query`, appliquée sur la config de base (sans fiche).
+
+    `raw["_raw_base"]` (posé par run_live) est la config sans fiche cible : on évite qu'une
+    surcharge de la fiche précédente (seuil de détection des clés…) ne reste en place.
+    """
+    import copy
+
+    base = raw.get("_raw_base") or raw
+    out = copy.deepcopy({k: v for k, v in base.items() if k != "_raw_base"})
+    for k, v in raw.items():  # réglages d'exécution (« _phone », « _stub_models »…)
+        if k.startswith("_") and k != "_raw_base":
+            out[k] = v
+    return apply_target(out, query)
+
+
+def sheet_for_config(raw: dict) -> TargetSheet | None:
+    """Fiche de la cible configurée (prompt fixe), ou None."""
+    q = (raw.get("target") or {}).get("query")
+    if not q:
+        return None
+    try:
+        return resolve_target(q, (raw.get("target") or {}).get("sheets_dir"))
+    except UnknownTarget:
+        return None
+
+
+def known_targets_phrase(directory: str | Path | None = None) -> str:
+    """« ta gourde ou tes clés » : ce que l'utilisateur peut demander."""
+    art = {"ma": "ta", "mon": "ton", "mes": "tes"}
+    names = []
+    for s in load_sheets(directory):
+        w = s.label.split(" ", 1)
+        names.append(f"{art.get(w[0], w[0])} {w[1]}" if len(w) == 2 else s.label)
+    if len(names) <= 1:
+        return "".join(names)
+    return ", ".join(names[:-1]) + " ou " + names[-1]

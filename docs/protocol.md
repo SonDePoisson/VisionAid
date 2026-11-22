@@ -14,6 +14,8 @@ Un seul téléphone est connecté à la fois. Une nouvelle connexion remplace l'
 | `imu` | `samples: [[t, gx, gy, gz, ax, ay, az], …]` | Lot toutes les ~50 ms. `t` en s (horloge du téléphone), gyro dans l'unité annoncée, accélération gravité incluse en m/s², repère appareil W3C. |
 | `ping` | `id`, `t_phone`, `prev_id`, `rtt` | Toutes les secondes. `rtt` (s) est l'aller-retour mesuré pour le ping `prev_id` (l'échange précédent) : le PC apparie ainsi délai et RTT du même échange. |
 | `notes` | `text` | Notes libres, enregistrées dans `meta.json` de la session. |
+| `command` | `text`, `alternatives` (liste, facultatif), `source` | Demande de l'utilisateur déjà en texte (reconnaissance de Safari, ou saisie) : « je cherche ma gourde », « stop ». Mode `stt` seulement. |
+| `command_audio` | `mime` (`audio/mp4`…), `data` (base64) | Demande enregistrée (quelques secondes), transcrite par Whisper sur le PC. |
 | `bye` | — | Arrêt volontaire. |
 
 ### Messages binaires (images)
@@ -35,6 +37,10 @@ En-tête : `{"type": "frame", "seq": int, "t_phone": float, "w": int, "h": int, 
 | `stats` | `fps_in`, `imu_hz`, `offset_ms`, `rtt_ms`, `frame_age_ms` | Toutes les secondes, pour l'affichage sur le téléphone. |
 | `error` | `message` | Erreur fatale (version, format), suivie de la fermeture. |
 | `sound` | `t`, `state`, `mode`, `az`, `pan`, `dist`, `interval`, `gain_db`, `obstacle_db`, `event` | Consigne sonore, ~20 par seconde (`realtime.cue_hz`). Voir « Son ». |
+| `speech` | `id`, `text`, `duck` | Phrase à dire (synthèse vocale du navigateur), une fois par `id`. `duck` : la couche chemin se tait jusqu'à la fin de la phrase (annonce de l'objet trouvé) ; les obstacles restent audibles. |
+| `heard` | `text`, `action` (`search`, `stop`, `unknown`), `target` | Ce que le PC a compris de la demande (affichage). |
+
+`welcome.voice` : `mode` (`prompt` ou `stt`), `stt` (`whisper` ou `phone`), `max_record_s`, `tts` (le téléphone dit les phrases), `lang`, `rate`, `target` (nom de l'objet en mode `prompt`). En mode `stt`, la page affiche le grand bouton **Parler** ; le micro n'est ouvert que pendant la demande (un casque Bluetooth repasse ensuite en stéréo).
 
 ## Son (PC → téléphone → casque)
 

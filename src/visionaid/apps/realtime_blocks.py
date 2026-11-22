@@ -176,18 +176,33 @@ class WorldBlock:
         self.use_phone_intrinsics = bool(raw.get("_session") or raw.get("_phone"))
         self._K: dict = {}
         self.dets: OrderedDict = OrderedDict()
+        self.furniture: OrderedDict = OrderedDict()
         self.n = 0
         self.n_with_dets = 0
+        self.n_furniture = 0
+        self.command_id = 0
+        self.landmark_hz = 2.0
+        self._t_landmarks = -1e9
 
     def process(self, inputs: dict[str, Any]) -> dict[str, Any] | None:
         from visionaid.bus.messages import Pose
         from visionaid.io.intrinsics import make_intrinsics
 
+        cmd = inputs.get("command")
+        if cmd is not None and cmd.id != self.command_id:
+            self.command_id = int(cmd.id)
+            self.wm.reset_target(cmd.id)  # nouvelle demande : cible oubliée, carte gardée
+            self.dets.clear()
         det = inputs.get("detections")
         if det is not None:
             self.dets[det.frame_idx] = det
             while len(self.dets) > 60:
                 self.dets.popitem(last=False)
+        fur = inputs.get("furniture")
+        if fur is not None and fur.frame_idx not in self.furniture:
+            self.furniture[fur.frame_idx] = fur
+            while len(self.furniture) > 20:
+                self.furniture.popitem(last=False)
         d, p = inputs.get("depth"), inputs.get("pose")
         if d is None or p is None or d.frame_idx != p.frame_idx:
             return None
@@ -212,8 +227,22 @@ class WorldBlock:
                 dets = self.dets[k]
         self.n += 1
         self.n_with_dets += dets is not None
-        cm, obj = self.wm.update(frame, d, p, dets)
+        fur = self.furniture.pop(d.frame_idx, None)
+        if fur is None and self.furniture:
+            k = min(self.furniture, key=lambda i: abs(i - d.frame_idx))
+            if abs(k - d.frame_idx) <= 2:
+                fur = self.furniture.pop(k)
+        self.n_furniture += fur is not None
+        cm, obj = self.wm.update(frame, d, p, dets, fur)
         out: dict[str, Any] = {"object": obj}
+        lm = self.wm.landmarks
+        if (
+            lm is not None
+            and lm.items
+            and time.time() - self._t_landmarks >= 1.0 / self.landmark_hz
+        ):
+            self._t_landmarks = time.time()
+            out["landmarks"] = lm.to_msg(d.t)
         if cm is not None:
             out["costmap"] = cm
             out["pose_world"] = Pose(
@@ -228,7 +257,13 @@ class WorldBlock:
         return out
 
     def stats(self) -> dict:
-        return {"n": self.n, "with_detections": self.n_with_dets}
+        lm = self.wm.landmarks
+        return {
+            "n": self.n,
+            "with_detections": self.n_with_dets,
+            "with_furniture": self.n_furniture,
+            "landmarks": [] if lm is None else [(m.label, m.n_obs) for m in lm.confirmed()],
+        }
 
 
 def make_planner(raw: dict):

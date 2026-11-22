@@ -41,17 +41,74 @@ def stub_scene_depth(h: int, w: int, K: np.ndarray, pitch_deg: float = 20.0, cam
 
 def make_live_perception(raw: dict):
     """Perception réelle, ou stub (boîte fixe, ReID texte seul) si `_stub_models`."""
-    cfg = _cfg(raw)
-    from visionaid.perception.pipeline import PerceptionBlock
+    return LivePerceptionBlock(raw)
 
-    if not raw.get("_stub_models"):
-        return PerceptionBlock(cfg)
-    from visionaid.perception.detector import StubDetector
-    from visionaid.perception.reid import TextOnlyReID
 
-    det = StubDetector(fn=lambda img, k: [(STUB_BOX, 0.9, "bottle")])
-    det.backend, det.weights, det.device = "stub", "stub", "cpu"
-    return PerceptionBlock(cfg, detector=det, reid=TextOnlyReID(cfg))
+def stt_mode(raw: dict) -> bool:
+    """Demande dite par l'utilisateur (aucune cible avant la première demande)."""
+    return str(raw.get("_command_mode") or (raw.get("command") or {}).get("mode")) == "stt"
+
+
+class LivePerceptionBlock:
+    """Perception + changement de cible à chaque demande (sujet `command`)."""
+
+    def __init__(self, raw: dict) -> None:
+        from visionaid.perception.pipeline import PerceptionBlock
+
+        cfg = _cfg(raw)
+        self.raw = raw
+        active = not stt_mode(raw)
+        self.cmd_id = 0
+        self.n_switch = 0
+        if not raw.get("_stub_models"):
+            self.block = PerceptionBlock(cfg, active=active)
+            if not active:
+                self._preload()
+            return
+        from visionaid.perception.detector import StubDetector
+        from visionaid.perception.reid import TextOnlyReID
+
+        det = StubDetector(fn=lambda img, k: [(STUB_BOX, 0.9, "bottle")])
+        det.backend, det.weights, det.device = "stub", "stub", "cpu"
+        self.block = PerceptionBlock(
+            cfg,
+            detector=det,
+            reid=TextOnlyReID(cfg) if active else None,
+            active=active,
+            reid_factory=lambda c, d: TextOnlyReID(c),
+        )
+
+    def _preload(self) -> None:
+        """Galerie ReID de chaque fiche préparée au démarrage (~10 s par fiche la première fois) :
+        la cible demandée à la voix est ensuite prise en quelques millisecondes."""
+        from visionaid.perception.target import load_sheets, target_raw
+        from visionaid.utils.logging import get_logger
+
+        log = get_logger("perception")
+        for sh in load_sheets((self.raw.get("target") or {}).get("sheets_dir")):
+            t0 = time.time()
+            try:
+                self.block.set_target(_cfg(target_raw(self.raw, sh.phrases[0])), 0)
+                log.info("Cible « %s » prête (%.1f s)", sh.label, time.time() - t0)
+            except Exception as e:  # noqa: BLE001 - fiche sans photo exploitable…
+                log.warning("Cible « %s » non préparée : %s", sh.label, e)
+        self.block.clear_target(0)
+
+    def process(self, inputs: dict[str, Any]) -> dict[str, Any] | None:
+        cmd = inputs.get("command")
+        if cmd is not None and cmd.id != self.cmd_id:
+            self.cmd_id = int(cmd.id)
+            self.n_switch += 1
+            if cmd.action == "search" and cmd.query:
+                from visionaid.perception.target import target_raw
+
+                self.block.set_target(_cfg(target_raw(self.raw, cmd.query)), cmd.id)
+            else:
+                self.block.clear_target(cmd.id)
+        return self.block.process(inputs)
+
+    def stats(self) -> dict:
+        return {"target_switches": self.n_switch, "target_id": self.block.target_id}
 
 
 class LiveGeometryBlock:
@@ -130,7 +187,9 @@ class LivePlannerBlock:
     def __init__(self, raw: dict, stale_s: float = 1.5) -> None:
         from visionaid.planning.planner import Planner
 
-        self.planner = Planner(_cfg(raw))
+        self.cfg = _cfg(raw)
+        self.planner = Planner(self.cfg)
+        self.cmd_id = 0
         self.stale_s = stale_s
         self._last_pose_key = None
         self._last_pose_wall = time.time()
@@ -140,6 +199,13 @@ class LivePlannerBlock:
         self.n_invalid_stale = 0
 
     def process(self, inputs: dict[str, Any]) -> dict[str, Any] | None:
+        from visionaid.planning.planner import Planner
+
+        cmd = inputs.get("command")
+        if cmd is not None and cmd.id != self.cmd_id:
+            self.cmd_id = int(cmd.id)
+            self.planner = Planner(self.cfg)  # nouvel objet : plus d'engagement sur l'ancien chemin
+            self._last_cm_key = None
         now = time.time()
         pose = inputs.get("pose_world")
         if pose is not None:
@@ -157,9 +223,11 @@ class LivePlannerBlock:
                 t = pose.t if pose is not None else 0.0
                 idx = pose.frame_idx if pose is not None else -1
                 nan2 = np.full(2, np.nan)
-                return {"path": Path(t, idx, np.zeros((0, 2)), nan2, nan2, False, 0.0)}
+                return {"path": Path(t, idx, np.zeros((0, 2)), nan2, nan2, False, 0.0, self.cmd_id)}
             return None
         cm, obj = inputs.get("costmap"), inputs.get("object")
+        if obj is not None and getattr(obj, "target_id", 0) != self.cmd_id:
+            obj = None  # objet d'une demande précédente
         if cm is None or obj is None or pose is None:
             return None
         ck = (cm.frame_idx, cm.t)
@@ -167,7 +235,9 @@ class LivePlannerBlock:
             return None
         self._last_cm_key = ck
         self.n_plans += 1
-        return {"path": self.planner.plan(cm, pose.T_world_cam[:2, 3], obj)}
+        p = self.planner.plan(cm, pose.T_world_cam[:2, 3], obj)
+        p.target_id = self.cmd_id
+        return {"path": p}
 
     def stats(self) -> dict:
         return {"n_plans": self.n_plans, "n_invalid_stale": self.n_invalid_stale}
@@ -179,43 +249,123 @@ class LiveGuidanceBlock:
 
     Sans pose nouvelle depuis `stale_s` (téléphone déconnecté, géométrie bloquée), la pose est
     considérée perdue : l'utilisateur entend « arrête-toi » au lieu d'un guide figé.
+
+    Demandes (sujet `command`) : nouvelle recherche → nouveau guidage (annonces comprises) ;
+    « stop » → silence ; phrase incomprise → réponse vocale, la recherche en cours continue.
+    En mode `stt`, rien ne joue avant la première demande (état IDLE).
+    Phrases : portées par la consigne sonore (téléphone) et/ou dites par le Mac (`_tts`).
     """
 
     def __init__(self, raw: dict, stale_s: float = 1.5) -> None:
         from visionaid.audio.director import SoundDirector
         from visionaid.guidance.cues import GuidanceEngine
+        from visionaid.guidance.narration import SpeechQueue
 
         cfg = _cfg(raw)
-        self.engine = GuidanceEngine(cfg)
+        self.raw = raw
+        self.cfg = cfg
+        hold = float(getattr(getattr(cfg, "tts", None), "hold_s", 1.0) or 1.0)
+        self.speech = SpeechQueue(hold)  # une seule file : numéros uniques pour le téléphone
+        self.active = not stt_mode(raw)
+        self.engine = GuidanceEngine(cfg, announce_start=self.active, speech=self.speech)
         self.director = SoundDirector(cfg.audio)
         self.stale_s = stale_s
         self._last_key = None
         self._last_wall = time.time()
         self.modes: dict[str, int] = {}
         self.n_stale = 0
+        self.cmd_id = 0
+        self.cmd_seq = 0
+        self.landmarks = None
+        self.commands: list[dict] = []
+        out = str(raw.get("_tts") or "phone")
+        self.mac = None
+        if out == "mac":
+            from visionaid.audio.tts import MacSpeaker
+
+            tts = getattr(cfg, "tts", None)
+            self.mac = MacSpeaker(
+                str(getattr(tts, "mac_voice", "Thomas")), int(getattr(tts, "mac_rate_wpm", 190))
+            )
+        self._said: set[int] = set()
+
+    def _on_command(self, cmd) -> None:
+        from visionaid.guidance.cues import GuidanceEngine
+
+        self.cmd_seq = int(cmd.seq)
+        self.commands.append({"t": cmd.t, "action": cmd.action, "text": cmd.text, "id": cmd.id})
+        if cmd.action == "unknown":
+            from visionaid.perception.target import known_targets_phrase
+
+            heard = f" « {cmd.text} »" if cmd.text else ""
+            self.speech.say(
+                f"Je n'ai pas compris{heard}. Tu peux chercher {known_targets_phrase()}."
+            )
+            return
+        if cmd.id == self.cmd_id:
+            return
+        self.cmd_id = int(cmd.id)
+        if cmd.action == "search":
+            from visionaid.perception.target import target_raw
+
+            cfg_t = _cfg(target_raw(self.raw, cmd.query)) if cmd.query else self.cfg
+            self.engine = GuidanceEngine(
+                cfg_t,
+                spoken=cmd.spoken,
+                plural=cmd.plural,
+                announce_start=True,
+                target_id=cmd.id,
+                speech=self.speech,
+            )
+            self.engine.landmarks = self.landmarks
+            self.active = True
+        else:
+            self.active = False
+            self.speech.say("D'accord, j'arrête la recherche.")
 
     def process(self, inputs: dict[str, Any]) -> dict[str, Any] | None:
         from dataclasses import replace
 
+        from visionaid.bus.messages import GuidanceCue
+
+        cmd = inputs.get("command")
+        if cmd is not None and (cmd.seq != self.cmd_seq or cmd.id != self.cmd_id):
+            self._on_command(cmd)
+        lms = inputs.get("landmarks")
+        if lms is not None:
+            self.landmarks = lms
+            self.engine.landmarks = lms
         pose = inputs.get("pose_world")
-        if pose is None:
+        if pose is None and not self.speech.queue and self.speech.cur is None:
             return None  # pas encore de pose : silence
         now = time.time()
-        key = (pose.frame_idx, pose.t)
-        if key != self._last_key:
-            self._last_key, self._last_wall = key, now
-        elif now - self._last_wall > self.stale_s:
-            pose = replace(pose, quality="lost")
-            self.n_stale += 1
-        cue = self.engine.update(
-            pose.t,
-            pose.frame_idx,
-            pose,
-            inputs.get("object"),
-            inputs.get("path"),
-            inputs.get("costmap"),
-        )
+        if pose is None or not self.active:
+            t = pose.t if pose is not None else now
+            text, sid, duck = self.speech.current(t)
+            cue = GuidanceCue(
+                t, -1 if pose is None else pose.frame_idx, "IDLE", speech=text, speech_id=sid
+            )
+            cue.speech_duck = duck
+        else:
+            key = (pose.frame_idx, pose.t)
+            if key != self._last_key:
+                self._last_key, self._last_wall = key, now
+            elif now - self._last_wall > self.stale_s:
+                pose = replace(pose, quality="lost")
+                self.n_stale += 1
+            cue = self.engine.update(
+                pose.t,
+                pose.frame_idx,
+                pose,
+                inputs.get("object"),
+                inputs.get("path"),
+                inputs.get("costmap"),
+            )
         snd = self.director.command(cue)
+        if snd.speech_id and snd.speech_id not in self._said:
+            self._said.add(snd.speech_id)
+            if self.mac is not None:
+                self.mac.say(snd.speech)
         self.modes[snd.mode] = self.modes.get(snd.mode, 0) + 1
         return {"cue": cue, "sound": snd}
 
@@ -224,7 +374,13 @@ class LiveGuidanceBlock:
             "modes": self.modes,
             "n_stale": self.n_stale,
             "messages": self.engine.messages[-50:],
+            "speech": self.speech.history[-50:],
+            "commands": self.commands[-20:],
         }
+
+    def close(self) -> None:
+        if self.mac is not None:
+            self.mac.close()
 
 
 # ---------------------------------------------------------------------------- puits
@@ -582,6 +738,27 @@ class RerunLiveBlock:
                     f"son : {snd.mode} ({snd.state}), direction {np.degrees(snd.azimuth):+.0f}°, "
                     f"pan {snd.pan:+.2f}, une note toutes les {snd.interval_s:.2f} s, "
                     f"obstacles {snd.obstacle_db:.0f} dB"
+                ),
+            )
+        if snd is not None and snd.speech_id and snd.speech_id != getattr(self, "_last_sid", 0):
+            self._last_sid = snd.speech_id
+            rr.log("status/voix", rr.TextLog(f"voix : {snd.speech}"))
+        lms = inputs.get("landmarks")
+        if lms is not None and lms is not getattr(self, "_last_lms", None) and len(lms.labels):
+            from visionaid.guidance.narration import noun
+
+            self._last_lms = lms
+            b = np.asarray(lms.boxes, float)
+            top = np.asarray(lms.top_z, float)
+            centers = np.c_[(b[:, 0] + b[:, 2]) / 2, (b[:, 1] + b[:, 3]) / 2, top / 2]
+            half = np.c_[(b[:, 2] - b[:, 0]) / 2, (b[:, 3] - b[:, 1]) / 2, top / 2]
+            rr.log(
+                "world/meubles",
+                rr.Boxes3D(
+                    centers=centers,
+                    half_sizes=half,
+                    colors=[[140, 90, 200]],
+                    labels=[noun(lab)[0] for lab in lms.labels],
                 ),
             )
         obj = inputs.get("object")

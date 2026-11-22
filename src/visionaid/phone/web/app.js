@@ -10,6 +10,7 @@ const ui = {
   age: $("age"), bubble: $("bubble"), levelText: $("levelText"), log: $("log"),
   notes: $("notes"), sendNotes: $("sendNotes"),
   sound: $("sound"), volume: $("volume"), volumeOut: $("volumeOut"), testSound: $("testSound"),
+  voiceBox: $("voiceBox"), talk: $("talk"), heard: $("heard"), typed: $("typed"), sendTyped: $("sendTyped"),
 };
 const audio = window.guideAudio;
 audio.onStatus = (text, cls) => { ui.sound.textContent = text; ui.sound.className = cls || ""; };
@@ -25,6 +26,7 @@ const state = {
   waitingAck: false, sentAt: 0, lastSend: 0, imuBuf: [], imuCount: 0, pingId: 0,
   pings: new Map(), lastRtt: null, lastRttId: null, reconnectDelay: 500, timers: [], hasImu: false,
   canvas: document.createElement("canvas"),
+  voice: null, greeted: false, listening: null, spokenIds: new Set(),
 };
 
 // Horloge du téléphone en secondes, commune aux images et aux capteurs.
@@ -51,6 +53,7 @@ async function start() {
     return;
   }
   ui.start.disabled = true;
+  state.greeted = false;
   // iOS : le son ne se déverrouille que dans le geste de l'utilisateur, avant toute attente
   audio.unlock();
   // iOS : la permission des capteurs doit être demandée dans le geste de l'utilisateur, en premier.
@@ -108,6 +111,7 @@ async function start() {
 
 function stop() {
   state.running = false;
+  stopListening(true);
   audio.stop();
   send({ type: "bye" });
   state.timers.forEach(clearInterval);
@@ -162,8 +166,18 @@ function connect() {
       for (const k of Object.keys(cfg)) if (m[k] !== undefined && m[k] !== null) cfg[k] = m[k];
       setStatus(m.session ? `Connecté — enregistrement « ${m.session} »` : "Connecté", "ok");
       audio.configure(m.audio).then(() => { ui.testSound.disabled = !audio.ready; });
+      onVoiceSettings(m.voice);
     } else if (m.type === "sound") {
       audio.onSound(m);
+    } else if (m.type === "speech") {
+      if (!state.spokenIds.has(m.id)) {
+        state.spokenIds.add(m.id);
+        log("Voix : " + m.text);
+        if (!state.voice || state.voice.tts !== false) audio.speak(m.text, !!m.duck);
+      }
+    } else if (m.type === "heard") {
+      ui.heard.textContent = m.text ? `Compris : « ${m.text} »` : "Rien entendu";
+      log(`Demande : « ${m.text} » → ${m.action}${m.target ? " (" + m.target + ")" : ""}`);
     } else if (m.type === "ack") {
       state.waitingAck = false;
     } else if (m.type === "pong") {
@@ -298,8 +312,147 @@ function sendFrame(tPhone, calib) {
   }, "image/jpeg", calib ? 0.95 : cfg.jpeg_quality);
 }
 
+// ------------------------------------------------------------------ voix : demande de l'utilisateur
+// Deux reconnaissances : « whisper » (défaut) = on enregistre quelques secondes et le PC transcrit ;
+// « phone » = reconnaissance de Safari (webkitSpeechRecognition), repli sur l'enregistrement.
+// Le micro est coupé dès la fin : un casque Bluetooth repasse alors en stéréo de qualité.
+function onVoiceSettings(v) {
+  state.voice = v || null;
+  if (v) { audio.voiceLang = v.lang || "fr-FR"; audio.voiceRate = v.rate || 1; }
+  const stt = !!(v && v.mode === "stt");
+  ui.voiceBox.hidden = !stt;
+  ui.talk.disabled = !stt;
+  if (!state.greeted && v) {
+    state.greeted = true;
+    if (stt) audio.speak("Appuie sur le grand bouton Parler, puis dis ce que tu cherches.", false);
+  }
+}
+
+function talk() {
+  audio.unlock();
+  if (state.listening) { stopListening(false); return; }
+  audio.cancelSpeech();
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (state.voice && state.voice.stt === "phone" && SR) recognize(SR);
+  else record();
+}
+
+function setListening(obj) {
+  state.listening = obj;
+  ui.talk.classList.toggle("listening", !!obj);
+  ui.talk.textContent = obj ? "⏹ J'écoute… (appuie pour finir)" : "🎤 Parler";
+}
+
+function recognize(SR) {
+  const r = new SR();
+  r.lang = (state.voice && state.voice.lang) || "fr-FR";
+  r.interimResults = false;
+  r.maxAlternatives = 3;
+  let done = false;
+  r.onresult = (e) => {
+    done = true;
+    const alts = Array.from(e.results[0] || []).map((a) => a.transcript);
+    ui.heard.textContent = `Entendu : « ${alts[0] || ""} »`;
+    send({ type: "command", text: alts[0] || "", alternatives: alts.slice(1), source: "safari" });
+  };
+  r.onerror = (e) => {
+    log("Reconnaissance de Safari : " + e.error + " → enregistrement envoyé au PC");
+    done = true;
+    setListening(null);
+    if (e.error !== "aborted") record();
+  };
+  r.onend = () => { if (state.listening && state.listening.rec === r) setListening(null); if (!done) ui.heard.textContent = "Rien entendu"; audio.resume(); };
+  setListening({ rec: r, stop: () => r.stop() });
+  audio.beep();
+  r.start();
+}
+
+async function record() {
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  } catch (e) {
+    ui.heard.textContent = "Micro refusé (Réglages → Safari → Micro)";
+    log("Micro : " + e);
+    return;
+  }
+  const types = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm", "audio/ogg"];
+  const mime = types.find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || "";
+  let rec;
+  try { rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined); } catch (e) {
+    stream.getTracks().forEach((t) => t.stop());
+    ui.heard.textContent = "Enregistrement impossible sur ce navigateur";
+    return;
+  }
+  const chunks = [];
+  rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  // fin automatique : silence de 0,9 s après la parole, ou durée maximale
+  let analyser = null, srcNode = null, timer = null, spoke = false, lastLoud = performance.now();
+  const t0 = performance.now(), maxMs = ((state.voice && state.voice.max_record_s) || 6) * 1000;
+  try {
+    srcNode = audio.ctx.createMediaStreamSource(stream);
+    analyser = audio.ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    srcNode.connect(analyser);
+  } catch (e) { analyser = null; }
+  const buf = new Float32Array(1024);
+  const finish = () => { if (rec.state !== "inactive") rec.stop(); };
+  timer = setInterval(() => {
+    const now = performance.now();
+    if (now - t0 > maxMs) return finish();
+    if (!analyser) return;
+    analyser.getFloatTimeDomainData(buf);
+    let e = 0; for (const x of buf) e += x * x;
+    const rms = Math.sqrt(e / buf.length);
+    if (rms > 0.03) { spoke = true; lastLoud = now; }
+    if (spoke && now - lastLoud > 900) finish();
+    if (!spoke && now - t0 > 4000) finish();
+  }, 50);
+  rec.onstop = async () => {
+    clearInterval(timer);
+    try { if (srcNode) srcNode.disconnect(); } catch (e) { /* déjà déconnecté */ }
+    stream.getTracks().forEach((t) => t.stop()); // micro coupé tout de suite
+    setListening(null);
+    audio.resume();
+    const blob = new Blob(chunks, { type: rec.mimeType || mime || "audio/mp4" });
+    if (!blob.size) { ui.heard.textContent = "Rien entendu"; return; }
+    ui.heard.textContent = "Je réfléchis…";
+    const b64 = await blobToBase64(blob);
+    send({ type: "command_audio", mime: blob.type, data: b64 });
+  };
+  setListening({ rec, stop: finish });
+  audio.beep();
+  rec.start();
+}
+
+function stopListening(abort) {
+  const l = state.listening;
+  if (!l) return;
+  try { if (abort && l.rec && l.rec.abort) l.rec.abort(); else l.stop(); } catch (e) { /* déjà arrêté */ }
+  if (abort) setListening(null);
+}
+
+function blobToBase64(blob) {
+  return new Promise((res) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result).split(",")[1] || "");
+    r.readAsDataURL(blob);
+  });
+}
+
+function sendTyped() {
+  const text = ui.typed.value.trim();
+  if (!text) return;
+  send({ type: "command", text, source: "clavier" });
+  ui.heard.textContent = `Envoyé : « ${text} »`;
+  ui.typed.value = "";
+}
+
 // ------------------------------------------------------------------ boutons
 ui.start.addEventListener("click", start);
+ui.talk.addEventListener("click", talk);
+ui.sendTyped.addEventListener("click", sendTyped);
+ui.typed.addEventListener("keydown", (e) => { if (e.key === "Enter") sendTyped(); });
 ui.stop.addEventListener("click", stop);
 ui.capture.addEventListener("click", () => {
   if (!ui.calibMode.checked) { log("Activez d'abord le mode calibration."); return; }

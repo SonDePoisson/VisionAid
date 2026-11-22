@@ -38,6 +38,9 @@ R = "visionaid.apps.realtime_blocks"
 def graph(raw: dict, source: str = "phone", rerun: str = "off") -> list[NodeSpec]:
     """Nœuds du graphe ; `source` ∈ {phone, session}."""
     plan_hz = float(raw["realtime"]["plan_hz"])
+    # demande à la voix : le téléphone publie `command` (cible changeable en cours de route)
+    stt = source == "phone" and str(raw.get("_command_mode")) == "stt"
+    cmd = ["command"] if stt else []
     if source == "session":
         src = NodeSpec("source", f"{R}:SessionReplayBlock", outputs=["frame", "imu"])
     else:
@@ -46,15 +49,15 @@ def graph(raw: dict, source: str = "phone", rerun: str = "off") -> list[NodeSpec
             "source",
             f"{L}:make_phone_source",
             inputs=["sound"],
-            outputs=["frame", "imu", "clock"],
+            outputs=["frame", "imu", "clock"] + cmd,
         )
     specs = [
         src,
         NodeSpec(
             "perception",
             f"{L}:make_live_perception",
-            inputs=["frame"],
-            outputs=["detections"],
+            inputs=["frame"] + cmd,
+            outputs=["detections", "furniture"],
             trigger="frame",
             heavy_inputs=["frame"],
         ),
@@ -70,15 +73,15 @@ def graph(raw: dict, source: str = "phone", rerun: str = "off") -> list[NodeSpec
         NodeSpec(
             "world",
             f"{L}:make_live_world",
-            inputs=["depth", "pose", "detections"],
-            outputs=["costmap", "object", "pose_world"],
+            inputs=["depth", "pose", "detections", "furniture"] + cmd,
+            outputs=["costmap", "object", "pose_world", "landmarks"],
             trigger="pose",
             heavy_inputs=["depth"],
         ),
         NodeSpec(
             "planner",
             f"{L}:LivePlannerBlock",
-            inputs=["costmap", "object", "pose_world"],
+            inputs=["costmap", "object", "pose_world"] + cmd,
             outputs=["path"],
             trigger=None,  # minuteur : replanifie sur costmap nouvelle, chien de garde sinon
             rate_hz=plan_hz,
@@ -87,7 +90,7 @@ def graph(raw: dict, source: str = "phone", rerun: str = "off") -> list[NodeSpec
         NodeSpec(
             "guidance",
             f"{L}:LiveGuidanceBlock",
-            inputs=["pose_world", "object", "path", "costmap"],
+            inputs=["pose_world", "object", "path", "costmap", "landmarks"] + cmd,
             outputs=["cue", "sound"],
             trigger=None,  # minuteur : consigne sonore à cadence fixe sur les dernières entrées
             rate_hz=float(raw["realtime"]["cue_hz"]),
@@ -114,6 +117,7 @@ def graph(raw: dict, source: str = "phone", rerun: str = "off") -> list[NodeSpec
                     "path",
                     "depth",
                     "sound",
+                    "landmarks",
                 ],
                 trigger="frame",
                 rate_hz=10.0,
@@ -135,7 +139,11 @@ def _wait_port(port: int, timeout: float) -> bool:
 
 
 def _fake_phone_thread(
-    raw: dict, video: str | None, schedule: list[tuple[float, float]], out: dict
+    raw: dict,
+    video: str | None,
+    schedule: list[tuple[float, float]],
+    out: dict,
+    commands: list[tuple[float, str]] | None = None,
 ):
     """Faux téléphone : alterne connexions (durée) et pauses selon `schedule`."""
     from visionaid.phone.certs import client_ssl_context, ensure_certs
@@ -165,10 +173,25 @@ def _fake_phone_thread(
             frames = _stub_frames()
             imu = lambda t, a=acc: (np.zeros(3), a)  # noqa: E731
         ph = FakePhone(
-            f"https://localhost:{port}/", ssl_ctx, frames, imu, fps=fps, seed=k, clock_offset=0.7
+            f"https://localhost:{port}/",
+            ssl_ctx,
+            frames,
+            imu,
+            fps=fps,
+            seed=k,
+            clock_offset=0.7,
+            commands=commands if k == 0 else None,
         )
         st = run_fake_phone(ph, run_s)
-        stats.append({"sent": st.sent_frames, "acks": st.acks, "errors": st.errors})
+        stats.append(
+            {
+                "sent": st.sent_frames,
+                "acks": st.acks,
+                "errors": st.errors,
+                "speech": st.speech,
+                "heard": st.heard,
+            }
+        )
         time.sleep(pause_s)
     out["fake_phone"] = stats
 
@@ -201,6 +224,7 @@ def run(
     rerun: str = "off",
     warmup_s: float = 25.0,
     stub_models: bool = False,
+    fake_commands: list[tuple[float, str]] | None = None,
 ) -> dict:
     """Lance le graphe ; renvoie le résumé (fusionné dans report.json sous « live »)."""
     raw = raw or load_raw()
@@ -208,6 +232,13 @@ def run(
     raw["_imu"] = True
     raw["_rerun"] = rerun
     raw["_stub_models"] = stub_models
+    out = str((raw.get("tts") or {}).get("output", "auto"))
+    if out == "auto":  # voix dans le casque en direct ; sur le Mac en rejeu (pas de téléphone)
+        out = "mac" if session else "phone"
+    raw.setdefault("_tts", out)
+    raw.setdefault("_command_mode", str((raw.get("command") or {}).get("mode", "prompt")))
+    if session:
+        raw["_command_mode"] = "prompt"  # rejeu : pas de téléphone pour parler
     if session:
         source = "session"
         raw["_session"] = session
@@ -241,7 +272,9 @@ def run(
                 time.sleep(min(warmup_s, 60.0))  # laisse les modèles se charger
                 sched = fake_schedule or [(duration_s, 0.0)]
                 th = threading.Thread(
-                    target=_fake_phone_thread, args=(raw, fake_video, sched, fake_out), daemon=True
+                    target=_fake_phone_thread,
+                    args=(raw, fake_video, sched, fake_out, fake_commands),
+                    daemon=True,
                 )
                 th.start()
                 t_start = time.time()
@@ -304,6 +337,25 @@ def main(argv=None) -> dict:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--duration", type=float, default=None, help="durée (s) ; défaut : illimitée")
     ap.add_argument("--target", default=None, help="prompt fixe, ex. « où sont mes clés »")
+    ap.add_argument(
+        "--command",
+        choices=["prompt", "stt"],
+        default=None,
+        help="prompt : objet fixé par --target ; stt : l'utilisateur dit ce qu'il cherche "
+        "(bouton Parler du téléphone). Défaut : stt sans --target, prompt avec",
+    )
+    ap.add_argument(
+        "--stt",
+        choices=["whisper", "phone"],
+        default=None,
+        help="reconnaissance vocale : whisper (sur le PC, défaut) ou phone (Safari)",
+    )
+    ap.add_argument(
+        "--tts",
+        choices=["auto", "phone", "mac", "off"],
+        default=None,
+        help="voix des annonces : auto (casque du téléphone en direct, Mac en rejeu), phone, mac, off",
+    )
     ap.add_argument("--session", default=None, help="session enregistrée à rejouer")
     ap.add_argument(
         "--fake-phone", nargs="?", const="", default=None, help="faux téléphone [vidéo]"
@@ -332,12 +384,23 @@ def main(argv=None) -> dict:
         from visionaid.utils.config import length_to_m
 
         ov["body.camera_height_m"] = length_to_m(args.height, "hauteur caméra")
+    if args.stt:
+        ov["command.stt"] = args.stt
+    if args.tts:
+        ov["tts.output"] = args.tts
+    mode = args.command or ("prompt" if (args.target or args.session) else "stt")
+    if mode == "prompt" and not (args.target or args.session):
+        raise SystemExit("--command prompt demande --target « où est ma gourde »")
+    ov["command.mode"] = mode
     raw = load_raw(overrides=ov or None)
+    # config sans fiche cible : base des cibles choisies à la voix (voir perception.target)
+    raw["_raw_base"] = load_raw(overrides={k: v for k, v in ov.items() if k != "target.query"})
+    raw["_command_mode"] = mode
     if args.record:
         if args.session:
             raise SystemExit("--record ne s'applique qu'au direct (pas au rejeu d'une session)")
         raw["_phone_record"] = args.record
-        raw["_phone_meta"] = {"target": args.target, "notes": ""}
+        raw["_phone_meta"] = {"target": args.target, "notes": "", "command": mode}
     fake = args.fake_phone is not None
     s = run(
         args.duration or 10**7,

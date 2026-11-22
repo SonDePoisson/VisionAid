@@ -141,6 +141,8 @@ class FakePhoneStats:
     welcome: dict = field(default_factory=dict)
     errors: list = field(default_factory=list)
     send_times: dict = field(default_factory=dict)  # seq -> t_phone d'envoi
+    speech: list = field(default_factory=list)  # phrases reçues (texte)
+    heard: list = field(default_factory=list)  # demandes comprises par le PC
 
 
 class FakePhone:
@@ -162,6 +164,7 @@ class FakePhone:
         ack_timeout_s: float = 1.0,
         protocol: int = PROTOCOL_VERSION,
         seed: int = 0,
+        commands: list[tuple[float, str]] | None = None,
     ) -> None:
         self.url = url.rstrip("/").replace("https://", "wss://").replace("http://", "ws://")
         if not self.url.endswith("/ws"):
@@ -179,6 +182,7 @@ class FakePhone:
         self.ack_timeout_s = ack_timeout_s
         self.protocol = protocol
         self.rng = random.Random(seed)
+        self.commands = list(commands or [])  # (délai après connexion en s, phrase dite)
         self.stats = FakePhoneStats()
         self._waiting_ack = False
         self._sent_at = 0.0
@@ -221,6 +225,9 @@ class FakePhone:
             asyncio.create_task(self._ping_loop(ws, duration_s)),
             asyncio.create_task(self._frame_loop(ws, duration_s, first, calib_frames)),
         ]
+        if self.commands:
+            recv_cmd = asyncio.create_task(self._command_loop(ws))
+            tasks.append(recv_cmd)
         try:
             res = await asyncio.gather(*tasks, return_exceptions=True)
             for r in res:  # connexion fermée par le serveur : fin normale, sinon on remonte
@@ -236,6 +243,16 @@ class FakePhone:
             for t in tasks:
                 t.cancel()
             recv.cancel()
+
+    async def _command_loop(self, ws) -> None:
+        """Demandes « dites » (texte, comme la reconnaissance de Safari) aux instants prévus."""
+        for delay, text in self.commands:
+            wait = self._t0 + delay - time.time()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            if ws.closed:
+                return
+            await ws.send_str(json.dumps({"type": "command", "text": text, "source": "fake"}))
 
     async def _recv_loop(self, ws) -> None:
         async for msg in ws:
@@ -254,6 +271,10 @@ class FakePhone:
                     self.stats.pongs += 1
             elif typ == "welcome":
                 self.stats.welcome = m
+            elif typ == "speech":
+                self.stats.speech.append(m.get("text", ""))
+            elif typ == "heard":
+                self.stats.heard.append(m)
             elif typ == "error":
                 self.stats.errors.append(m.get("message"))
 

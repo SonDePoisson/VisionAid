@@ -31,6 +31,11 @@
   .sound { background:#1c1c1c; border-radius:10px; padding:10px; margin:8px 0; }
   .sound label { margin:6px 0 0; }
   .sound input[type=range] { width:100%; accent-color:var(--accent); }
+  #talk { min-height:28vh; font-size:30px; background:#3c8cff; color:#fff; }
+  #talk.listening { background:var(--err); }
+  #heard { font-size:18px; margin:4px 0 8px; min-height:1.4em; }
+  .typed { display:flex; gap:8px; } .typed input { flex:1; background:#1c1c1c; color:var(--fg); border:0; border-radius:10px; padding:8px; font:inherit; }
+  .typed button { width:auto; margin:0; }
   #log { color:var(--muted); font-size:12px; white-space:pre-wrap; max-height:120px; overflow:auto; }
 </style>
 </head>
@@ -39,6 +44,14 @@
   <h1>VisionAId — capteur</h1>
   <div id="status">Prêt. Fixez le téléphone sur le torse, écran vers vous, branchez le casque, puis appuyez sur Démarrer.</div>
   <button id="start">Démarrer</button>
+  <div id="voiceBox" hidden>
+    <button id="talk" disabled aria-label="Parler : dire l'objet cherché">🎤 Parler</button>
+    <div id="heard" aria-live="polite"></div>
+    <div class="typed">
+      <input id="typed" type="text" placeholder="ou écrire : je cherche ma gourde" autocomplete="off">
+      <button id="sendTyped" class="secondary">Envoyer</button>
+    </div>
+  </div>
   <div class="grid">
     <div><b id="fps">–</b><span>images/s reçues par le PC</span></div>
     <div><b id="imu">–</b><span>IMU (Hz) reçue</span></div>

@@ -33,14 +33,35 @@ class WorldModel:
         self.pose_quality = "init"
         self._pending: list[tuple] = []  # mesures de cible reçues avant l'alignement du sol
         self._t_prev: float | None = None
+        # meubles (description de l'endroit où est l'objet) ; gardés quand la cible change
+        from visionaid.mapping.landmarks import LandmarkMap
+
+        lm = getattr(cfg, "landmarks", None)
+        self.landmarks = LandmarkMap(lm) if lm is not None else None
+        self.target_id = 0
+
+    def reset_target(self, target_id: int) -> None:
+        """Nouvelle demande : la cible est oubliée, la carte et les meubles sont gardés."""
+        self.anchor = ObjectAnchor(self.cfg.anchor)
+        self.cand_anchor = ObjectAnchor(self.cfg.anchor)
+        self._pending = []
+        self.t_first_candidate = None
+        self.target_id = int(target_id)
 
     def T_aligned(self, T_vo_cam: np.ndarray) -> np.ndarray:
         return self.floor.T_world_vo() @ T_vo_cam
 
     def update(
-        self, frame: Frame, depth: Depth, pose: Pose, dets: Detections | None
+        self,
+        frame: Frame,
+        depth: Depth,
+        pose: Pose,
+        dets: Detections | None,
+        furniture: Detections | None = None,
     ) -> tuple[Costmap | None, ObjectEstimate]:
         t = frame.t
+        if dets is not None and getattr(dets, "target_id", 0) != self.target_id:
+            dets = None  # détections d'une demande précédente (encore en vol sur le bus)
         self.pose_quality = pose.quality
         # « degraded » (orientation IMU seule, position gelée) : pose publiée, mais pas de
         # cartographie ni d'ancrage, la position étant fausse dès que l'utilisateur marche
@@ -98,6 +119,11 @@ class WorldModel:
             if cand is not None and self.anchor.x is None:
                 m, b, c = cand
                 self.cand_anchor.update(t, T, depth.depth, frame.K, m, b, c)
+            if furniture is not None and self.landmarks is not None and len(furniture.boxes):
+                from visionaid.perception.pipeline import unpack_masks
+
+                fm = unpack_masks(furniture, frame.image.shape[1])
+                self.landmarks.update(t, T, depth.depth, frame.K, furniture, fm)
         else:
             self.anchor.predict(t)
         return self.grid.to_msg(t, frame.frame_idx), self._estimate(t, frame.frame_idx)
@@ -112,6 +138,7 @@ class WorldModel:
     def _estimate(self, t: float, idx: int) -> ObjectEstimate:
         """Cible confirmée si elle existe ; sinon cible probable cohérente (état « candidate »)."""
         est = self.anchor.estimate(t, idx)
+        est.target_id = self.target_id
         if est.state != "unknown" or self.cand_anchor.n_meas < self.cand_min_meas:
             return est
         c = self.cand_anchor.estimate(t, idx)
@@ -119,7 +146,9 @@ class WorldModel:
             return est
         if self.t_first_candidate is None:
             self.t_first_candidate = t
-        return ObjectEstimate(c.t, c.frame_idx, c.position, c.cov, "candidate", c.confidence)
+        return ObjectEstimate(
+            c.t, c.frame_idx, c.position, c.cov, "candidate", c.confidence, self.target_id
+        )
 
     # interface Block du bus
     def process(self, inputs: dict[str, Any]) -> dict[str, Any] | None:

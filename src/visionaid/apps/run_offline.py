@@ -116,7 +116,7 @@ def run(
     # audio synchronisé
     t0 = pipe.records[0].t if pipe.records else 0.0
     duration = n / src.fps
-    ar = AudioRenderer(cfg.audio)
+    ar = AudioRenderer(cfg.audio, getattr(cfg, "tts", None), resolve_path(cfg.paths.cache) / "tts")
     stereo = ar.render(pipe.cues, t0, duration)
     wav = out / "guidance.wav"
     ar.write_wav(wav, stereo)
