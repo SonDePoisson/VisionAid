@@ -338,6 +338,12 @@ def main(argv=None) -> dict:
     ap.add_argument("--duration", type=float, default=None, help="durée (s) ; défaut : illimitée")
     ap.add_argument("--target", default=None, help="prompt fixe, ex. « où sont mes clés »")
     ap.add_argument(
+        "--demo",
+        action="store_true",
+        help="démo : un seul objet de la catégorie dans la pièce (une seule bouteille) ; il est "
+        "reconnu dès sa détection, sans photos de référence ni couleur",
+    )
+    ap.add_argument(
         "--command",
         choices=["prompt", "stt"],
         default=None,
@@ -392,6 +398,8 @@ def main(argv=None) -> dict:
     if mode == "prompt" and not (args.target or args.session):
         raise SystemExit("--command prompt demande --target « où est ma gourde »")
     ov["command.mode"] = mode
+    if args.demo:
+        ov["reid.text_only"] = True
     raw = load_raw(overrides=ov or None)
     # config sans fiche cible : base des cibles choisies à la voix (voir perception.target)
     raw["_raw_base"] = load_raw(overrides={k: v for k, v in ov.items() if k != "target.query"})

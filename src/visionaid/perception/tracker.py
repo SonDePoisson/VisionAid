@@ -185,7 +185,11 @@ class TargetTracker:
     def _update_score(self, tr: Track, s: float, init: bool = False) -> None:
         if not init:
             tr.score_ema = self.alpha * s + (1 - self.alpha) * tr.score_ema
-        tr.cand_hits = tr.cand_hits + 1 if s >= self.cand_threshold else 0
+        # persistance jugée sur le score lissé : de loin, le score image par image oscille
+        # autour du seuil (0,46-0,55 pour 0,49) et un critère « 5 images d'affilée » repartait
+        # sans cesse de zéro (live4 : gourde nettement vue de 26 à 53 s, reconnue à 55 s).
+        # Les faux objets de forme proche restent écartés par la couleur (candidate_min_color).
+        tr.cand_hits = tr.cand_hits + 1 if tr.score_ema >= self.cand_threshold else 0
         if s >= self.threshold:
             tr.above += 1
             tr.below = 0

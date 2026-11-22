@@ -31,6 +31,10 @@ def build_reid(cfg, detector=None) -> tuple[TargetReID, list, YoloDetector]:
     Sans photo de référence pour la cible : ReID « texte seul » (confiance du détecteur).
     """
     det = detector or YoloDetector(cfg)
+    if bool(getattr(cfg.reid, "text_only", False)):
+        # mode démo : un seul objet de cette catégorie dans la pièce ; toute détection du
+        # prompt texte est la cible (pas de photos de référence ni de règle de couleur)
+        return TextOnlyReID(cfg), [], det
     refs = sorted(resolve_path(cfg.paths.ref_dir).glob(cfg.paths.ref_glob))
     if not refs:
         log.warning(

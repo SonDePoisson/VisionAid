@@ -41,6 +41,7 @@ uv run python -m visionaid.apps.run_phone --record cles_essai2 --target "où son
 | `--rerun file` | fichier seul, sans fenêtre |
 | `--rerun off` | rien |
 | `--duration 60` | arrêt automatique après 60 s |
+| `--demo` | démo : une seule bouteille dans la pièce, la gourde est reconnue dès sa détection (pas de photos de référence ni de couleur) |
 | `--depth-width 364` | profondeur plus rapide (−35 % de latence), mais guidage moins précis |
 
 ### Demande à la voix (« je cherche ma gourde »)

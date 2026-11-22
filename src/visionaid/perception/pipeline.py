@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import pickle
 import time
 from typing import Any
@@ -215,6 +216,10 @@ def run_video_perception(
     )
     th_file = resolve_path(cfg.reid.threshold_file)
     key_cfg += th_file.read_text() if th_file.exists() else ""
+    # le code du suivi et de la ReID fait partie de la clé : sinon une modification du code
+    # relisait d'anciennes détections du cache (mesures « avant/après » identiques)
+    here = Path(__file__).parent
+    key_cfg += "".join((here / f).read_text() for f in ("tracker.py", "reid.py", "pipeline.py"))
     from visionaid.io.session import media_hash, open_media
 
     key = media_hash(video, key_cfg)
