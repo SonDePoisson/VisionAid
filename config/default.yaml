@@ -73,7 +73,8 @@ tracker:
   iou_match: 0.3
   confirm_frames: 3
   candidate_ratio: 0.85     # cible probable : score moyen ≥ 0,85 × seuil ReID…
-  candidate_frames: 5       # …sur au moins 5 images consécutives (avant confirmation)
+  candidate_frames: 5       # …sur au moins 5 images consécutives (avant confirmation)…
+  candidate_min_color: 0.7  # …et part couleur lissée ≥ 0,7 (gourde orange : ≥ 0,82 ; thermos noir : 0,50)
   lost_frames: 10
   max_age_frames: 30
   score_ema: 0.5

@@ -278,6 +278,7 @@ class TargetReID:
         self.colors = make_color_model(r)  # None : cible sans couleur distinctive
         self.w_embed = float(r.w_embed)
         self.w_color = float(r.w_color) if self.colors is not None else 0.0
+        self.last_color: np.ndarray | None = None  # part couleur du dernier appel
         self.gallery: np.ndarray | None = None
         self.gallery_hists: list[np.ndarray] = []
         self.ref_crops: list[tuple[np.ndarray, np.ndarray]] = []
@@ -325,12 +326,15 @@ class TargetReID:
     def score_crops(self, items: list[tuple[np.ndarray, np.ndarray]]) -> np.ndarray:
         """Score combiné ∈ [0,1] pour des (crop, masque)."""
         if not items:
+            self.last_color = np.zeros(0, np.float32) if self.w_color > 0 else None
             return np.zeros(0, np.float32)
         emb = self.embed_scores([c for c, _ in items])
         emb01 = np.clip(emb, 0.0, 1.0)
+        self.last_color = None
         if self.w_color <= 0:
             return emb01.astype(np.float32)
         col = np.array([self.color_score(c, m) for c, m in items], np.float32)
+        self.last_color = col  # part couleur, lue par le suivi (cible probable)
         return combine_scores(emb01, col, self.w_embed, self.w_color)
 
     def score_detections(

@@ -35,13 +35,15 @@ class PerceptionBlock:
     def __call__(self, frame: Frame) -> Detections:
         t0 = time.perf_counter()
         d = self.detector.detect(frame.image, frame.t, frame.frame_idx)
+        self.reid.last_color = None
         if not len(d.boxes):
             scores = np.zeros(0, np.float32)
         elif getattr(self.reid, "text_only", False):
             scores = self.reid.score_detections(frame.image, d.boxes, d.masks, d.scores)
         else:
             scores = self.reid.score_detections(frame.image, d.boxes, d.masks)
-        d = self.tracker.update(d, scores)
+        colors = getattr(self.reid, "last_color", None) if len(d.boxes) else None
+        d = self.tracker.update(d, scores, colors)
         self.times.append(time.perf_counter() - t0)
         return d
 

@@ -47,6 +47,7 @@ class Track:
     confirmed: bool = False
     label: str = ""
     cand_hits: int = 0  # images consécutives au-dessus du seuil « probable »
+    color_ema: float | None = None  # score de couleur lissé (None : pas de modèle de couleur)
 
     def predict(self) -> np.ndarray:
         return self.box + self.vel
@@ -67,6 +68,8 @@ class TargetTracker:
         self.reject_threshold = 0.6 * self.threshold
         self.cand_threshold = float(getattr(t, "candidate_ratio", 1.0)) * self.threshold
         self.cand_frames = int(getattr(t, "candidate_frames", 10**6))
+        # une cible « probable » doit aussi avoir la bonne couleur (thermos noir ≠ gourde orange)
+        self.cand_min_color = float(getattr(t, "candidate_min_color", 0.0) or 0.0)
         self.candidate_id = -1
         self.tracks: list[Track] = []
         self._next_id = 1
@@ -89,12 +92,21 @@ class TargetTracker:
         r, c = linear_sum_assignment(cost)
         return [(i, j) for i, j in zip(r, c, strict=True) if gate[i, j]]
 
-    def update(self, dets: Detections, reid_scores: np.ndarray | None) -> Detections:
-        """Met à jour les pistes ; remplit `track_ids`, `reid_scores`, `target_idx`, `target_track_id`."""
+    def update(
+        self,
+        dets: Detections,
+        reid_scores: np.ndarray | None,
+        color_scores: np.ndarray | None = None,
+    ) -> Detections:
+        """Met à jour les pistes ; remplit `track_ids`, `reid_scores`, `target_idx`, `target_track_id`.
+
+        `color_scores` (optionnel) : part couleur du score ReID, exigée pour une cible probable.
+        """
         n = len(dets.boxes)
         scores = (
             np.zeros(n, np.float32) if reid_scores is None else np.asarray(reid_scores, np.float32)
         )
+        colors = None if color_scores is None or len(color_scores) != n else color_scores
         matches = self._match(dets.boxes, scores)
         matched_t = {i for i, _ in matches}
         matched_d = {j for _, j in matches}
@@ -108,6 +120,7 @@ class TargetTracker:
             tr.misses = 0
             tr.label = dets.labels[j] if j < len(dets.labels) else tr.label
             self._update_score(tr, float(scores[j]))
+            self._update_color(tr, None if colors is None else float(colors[j]))
             track_ids[j] = tr.id
         for i, tr in enumerate(self.tracks):
             if i not in matched_t:
@@ -127,6 +140,7 @@ class TargetTracker:
                 self._next_id += 1
                 tr.score_ema = float(scores[j])
                 self._update_score(tr, float(scores[j]), init=True)
+                self._update_color(tr, None if colors is None else float(colors[j]))
                 self.tracks.append(tr)
                 track_ids[j] = tr.id
         self.tracks = [t for t in self.tracks if t.misses <= self.max_age]
@@ -153,6 +167,7 @@ class TargetTracker:
                 and t.misses == 0
                 and t.cand_hits >= self.cand_frames
                 and t.score_ema >= self.cand_threshold
+                and (t.color_ema is None or t.color_ema >= self.cand_min_color)
             ]
             if cands:
                 best = max(cands, key=lambda t: t.score_ema)
@@ -161,6 +176,11 @@ class TargetTracker:
                     self.candidate_id = best.id
                     dets.candidate_idx = int(hits[0])
         return dets
+
+    def _update_color(self, tr: Track, c: float | None) -> None:
+        if c is None:
+            return
+        tr.color_ema = c if tr.color_ema is None else self.alpha * c + (1 - self.alpha) * tr.color_ema
 
     def _update_score(self, tr: Track, s: float, init: bool = False) -> None:
         if not init:

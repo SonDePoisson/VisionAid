@@ -113,3 +113,30 @@ def test_candidate_never_arrived():
         for k in range(20)
     ]
     assert "ARRIVED" in st2  # même scène, cible confirmée : arrivée
+
+
+def run_col(tracker, seq):
+    """Comme `run`, avec la part couleur : items = (boîte, score, couleur)."""
+    out = []
+    for k, items in enumerate(seq):
+        det = StubDetector({k: [(b, 0.9, "bottle") for b, _, _ in items]}).detect(IMG, k / 10, k)
+        out.append(
+            tracker.update(det, np.array([s for _, s, _ in items]), np.array([c for *_, c in items]))
+        )
+    return out
+
+
+def test_candidate_needs_target_colour():
+    """Essai du 22/11 (gourde_son_live2) : un thermos noir (score 0,51, couleur 0,50, sans orange)
+    a été pris pour cible probable 5 s avant que la vraie gourde (couleur ≥ 0,82) ne soit vue."""
+    cfg = load_config()
+    thermos = run_col(TargetTracker(cfg, TH), [[(BOX_A, 0.52, 0.50)]] * 10)
+    assert all(d.candidate_idx < 0 for d in thermos)
+    gourde = run_col(TargetTracker(cfg, TH), [[(BOX_A, 0.52, 0.88)]] * 10)
+    assert [d.candidate_idx for d in gourde][4:] == [0] * 6
+    # thermos plus ressemblant et gourde plus loin dans la même image : la gourde est choisie
+    both = run_col(TargetTracker(cfg, TH), [[(BOX_A, 0.54, 0.45), (BOX_B, 0.51, 0.85)]] * 8)
+    assert both[-1].candidate_idx == 1
+    # sans modèle de couleur (clés, cible sans photo) : règle inchangée
+    nocol = run(TargetTracker(cfg, TH), [[(BOX_A, 0.52)]] * 8)
+    assert nocol[-1].candidate_idx == 0
