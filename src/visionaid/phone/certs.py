@@ -103,8 +103,10 @@ def url_host(a: str) -> str:
 
 def host_names() -> list[str]:
     """Noms DNS couverts par le certificat serveur."""
+    from visionaid.phone.mdns import BONJOUR_HOST
+
     h = socket.gethostname().split(".")[0]
-    names = {"localhost", h, f"{h}.local"}
+    names = {"localhost", h, f"{h}.local", BONJOUR_HOST}
     return sorted(n for n in names if n)
 
 

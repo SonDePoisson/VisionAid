@@ -353,7 +353,7 @@ document.addEventListener("click", (e) => {
     const on = sw.getAttribute("aria-checked") !== "true";
     sw.setAttribute("aria-checked", String(on));
     api("settings", { [key]: on }).then(refresh);
-    if (key === "viz" || key === "record") $("#restartNote").hidden = false;
+    if (key === "record") $("#restartNote").hidden = false;
   }
 });
 

@@ -87,6 +87,7 @@ class CommandDesk:
         self._lock = threading.Lock()
         self.pending: list = []
         self.current = None
+        self.searching = False  # une recherche est en cours (dernière demande search / stop)
         self.id = 0
         self.seq = 0
         self.log: list[dict] = []
@@ -135,12 +136,15 @@ class CommandDesk:
             self.seq += 1
             if action in ("search", "stop"):
                 self.id += 1
+                self.searching = action == "search"
             cmd = VoiceCommand(
                 t=time.time(),
                 id=self.id,
                 action=action,
                 text=text,
-                query=text if sheet is not None else "",
+                # phrase qui désigne sûrement la fiche (la reconnaissance a pu retenir une
+                # autre transcription que la première)
+                query=sheet.phrases[0] if sheet is not None else "",
                 target=sheet.name if sheet is not None else "",
                 spoken=sheet.spoken if sheet is not None else "",
                 plural=bool(sheet.plural) if sheet is not None else False,
@@ -151,7 +155,17 @@ class CommandDesk:
                 {"t": cmd.t, "text": text, "action": action, "target": cmd.target, "source": source}
             )
         if self.reply is not None:
-            self.reply({"type": "heard", "text": text, "action": action, "target": cmd.target})
+            self.reply(
+                {
+                    "type": "heard",
+                    "text": text,
+                    "action": action,
+                    "target": cmd.target,
+                    "spoken": cmd.spoken,
+                    "plural": cmd.plural,
+                    "feminine": bool(sheet.feminine) if sheet is not None else False,
+                }
+            )
 
     def pop(self):
         """Prochaine demande à publier (ou None)."""
@@ -260,7 +274,8 @@ class PhoneSourceBlock:
             return
         if obj.get("action") == "start" and obj.get("text"):
             self.desk.submit([str(obj["text"])], source="ordinateur")
-        elif obj.get("action") == "stop" and self.desk.current is not None:
+        elif obj.get("action") == "stop" and self.desk.searching:
+            # seulement si une recherche est en cours : sinon « D'accord, j'arrête » pour rien
             self.desk.submit(["stop"], source="ordinateur")
 
     def _reply(self, obj: dict) -> None:

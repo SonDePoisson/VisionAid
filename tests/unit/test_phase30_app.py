@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import shutil
 import socket
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 
@@ -123,26 +125,48 @@ def _phone(state=None, az=0.0, dist=2.43, heard=None, age=0.1):
 
 
 def test_guide_view_phases(ctl):
-    s = ctl.settings.snapshot()
     gourde = {"text": "je cherche ma gourde", "action": "search", "target": "gourde"}
-    assert ctl._guide_view(_phone(), False, 0, s)["phase"] == "off"
-    v = ctl._guide_view(_phone("IDLE"), True, 0, s)
+    assert ctl._guide_view(_phone(), False, 0, "")["phase"] == "off"
+    v = ctl._guide_view(_phone("IDLE"), True, 0, "")
     assert v["phase"] == "ecoute" and v["angle_deg"] is None
-    v = ctl._guide_view(_phone("SEARCHING", heard=gourde), True, 0, s)
+    # objet choisi (ordinateur ou voix) : recherche affichée avant la première consigne
+    v = ctl._guide_view(_phone("IDLE"), True, 0, "gourde")
+    assert v["phase"] == "recherche"
+    v = ctl._guide_view(_phone("SEARCHING", heard=gourde), True, 0, "gourde")
     assert v["phase"] == "recherche" and v["title"] == "Recherche de la gourde."
-    v = ctl._guide_view(_phone("NAVIGATING", heard=gourde), True, time.time(), s)
+    v = ctl._guide_view(_phone("NAVIGATING", heard=gourde), True, time.time(), "gourde")
     assert v["phase"] == "trouve"
     # azimut positif = à gauche → angle affiché négatif
-    v = ctl._guide_view(_phone("NAVIGATING", az=0.6, heard=gourde), True, time.time() - 60, s)
+    v = ctl._guide_view(
+        _phone("NAVIGATING", az=0.6, heard=gourde), True, time.time() - 60, "gourde"
+    )
     assert v["phase"] == "route" and v["big"] == "2,4 m"
     assert v["angle_deg"] < 0 and v["small"] == "légèrement à gauche"
     assert v["title"] == "En route vers la gourde."
     cles = {"text": "où sont mes clés", "action": "search", "target": "cles"}
-    v = ctl._guide_view(_phone("ARRIVED", heard=cles), True, time.time() - 60, s)
+    v = ctl._guide_view(_phone("ARRIVED", heard=cles), True, time.time() - 60, "cles")
     assert v["phase"] == "arrivee" and v["detail"] == "Les clés sont à portée de main."
     # consigne trop ancienne (téléphone coupé) : plus de direction affichée
-    v = ctl._guide_view(_phone("NAVIGATING", heard=gourde, age=10), True, time.time() - 60, s)
+    v = ctl._guide_view(
+        _phone("NAVIGATING", heard=gourde, age=10), True, time.time() - 60, "gourde"
+    )
     assert v["angle_deg"] is None
+
+
+def test_guide_view_common_object(ctl):
+    """Objet dit au téléphone hors des fiches : nom et accord donnés par le serveur."""
+    p = _phone("SEARCHING")
+    p["search"] = {"target": "telephone", "spoken": "le téléphone", "plural": False}
+    v = ctl._guide_view(p, True, 0, "telephone")
+    assert v["title"] == "Recherche du téléphone." and v["small"] == "le téléphone"
+    p = _phone("NAVIGATING", az=0.0)
+    p["search"] = {"target": "telephone", "spoken": "le téléphone", "plural": False}
+    assert ctl._guide_view(p, True, time.time(), "telephone")["title"] == "Le téléphone trouvé."
+    p = _phone("NAVIGATING", az=0.0)
+    p["search"] = {"target": "lunettes", "spoken": "les lunettes", "plural": True, "feminine": True}
+    assert ctl._guide_view(p, True, time.time(), "lunettes")["title"] == "Les lunettes trouvées."
+    v = ctl._guide_view(_phone("SEARCHING"), True, 0, "cles")
+    assert v["title"] == "Recherche des clés."
 
 
 def test_side_text_and_distance():
@@ -167,12 +191,55 @@ def test_start_here_sends_object_phrase(ctl, monkeypatch):
     assert sent[-1]["action"] == "levels" and sent[-1]["levels"]["chemin"] < 0
 
 
-def test_follow_spoken_requests(ctl):
-    """Demande dite au téléphone : l'application passe en guidage ; « stop » l'arrête."""
-    ctl._follow_phone({"heard": {"action": "search", "wall": 1.0}})
-    assert ctl.guiding
-    ctl._follow_phone({"heard": {"action": "stop", "wall": 2.0}})
-    assert not ctl.guiding
+def test_follow_phone_server_state(ctl):
+    """L'état du guidage vient du serveur du téléphone (même source que le téléphone)."""
+    ctl._follow_phone({"guide": True, "search": {"target": "gourde"}})
+    assert ctl.guiding and ctl.search_target == "gourde"
+    ctl._follow_phone({"guide": False, "search": None})
+    assert not ctl.guiding and ctl.search_target == ""
+    # une ancienne demande entendue ne relance plus rien (le guidage reste arrêté)
+    ctl._follow_phone({"guide": False, "heard": {"action": "search", "target": "gourde"}})
+    assert not ctl.guiding and ctl.search_target == ""
+    # guidage lancé à la voix : rien demandé encore → écoute
+    ctl._follow_phone({"guide": True, "search": None})
+    assert ctl.guiding and ctl.search_target == ""
+
+
+def test_server_guide_and_search_state(tmp_path):
+    """Serveur du téléphone : guidage et recherche, partagés avec le téléphone et l'application."""
+    from visionaid.phone.server import PhoneServer
+    from visionaid.utils.config import load_config
+
+    cfg = load_config(overrides={"phone.certs_dir": str(tmp_path / "certs")})
+    srv = PhoneServer(cfg, control_token="t")
+    assert srv.control({"action": "start", "mode": "stt"}) is False  # téléphone absent
+    assert srv.guide and srv.search is None
+    srv.send_json({"type": "heard", "action": "search", "target": "gourde", "text": "ma gourde"})
+    assert srv.search["target"] == "gourde" and srv._welcome()["search"] == srv.search
+    srv.send_json({"type": "heard", "action": "unknown", "target": "", "text": "bla"})
+    assert srv.guide and srv.search["target"] == "gourde"  # incompris : rien ne change
+    srv.send_json({"type": "heard", "action": "stop", "target": "", "text": "stop"})
+    assert not srv.guide and srv.search is None
+    srv.control({"action": "start", "mode": "here"})
+    srv.control({"action": "stop"})
+    assert not srv.guide and srv.search is None
+    srv.control({"action": "start", "mode": "here"})
+    srv.control({"action": "quit"})  # application fermée : plus de guidage
+    assert not srv.guide and srv.search is None
+
+
+def test_desk_stop_only_when_searching():
+    """Arrêter depuis l'ordinateur sans recherche en cours : pas de « D'accord, j'arrête »."""
+    from visionaid.phone.block import CommandDesk
+
+    desk = CommandDesk({"command": {"stt": "phone"}})
+    assert not desk.searching
+    desk.submit(["je cherche ma gourde"])
+    assert desk.searching
+    desk.submit(["blablabla"])  # incompris : la recherche continue
+    assert desk.searching
+    desk.submit(["stop"])
+    assert not desk.searching
 
 
 # ------------------------------------------------------------------ pilotage du serveur du téléphone
@@ -256,3 +323,51 @@ def test_app_server_api_and_qr():
         assert "Connecter le téléphone." in html and "iPhone</strong>" not in html
     finally:
         srv.stop()
+
+
+def test_pocket_text_drops_quotes():
+    """Le modèle français lit mal les guillemets et les deux-points : remplacés par des pauses."""
+    from visionaid.audio.tts import pocket_text
+
+    t = pocket_text("Je n'ai pas compris « ma licorne ». Dis par exemple : je cherche mes clés.")
+    assert t == "Je n'ai pas compris, ma licorne. Dis par exemple, je cherche mes clés."
+    assert pocket_text("Attention, obstacle devant toi.") == "Attention, obstacle devant toi."
+
+
+def test_voice_kwargs_defaults_to_pocket():
+    from visionaid.audio.tts import voice_kwargs
+
+    kw = voice_kwargs(load_config().tts)
+    assert (kw["engine"], kw["pocket_language"], kw["pocket_voice"]) == (
+        "pocket",
+        "french",
+        "estelle",
+    )
+
+
+@pytest.mark.skipif(shutil.which("say") is None, reason="voix de macOS absente")
+def test_phone_server_tts_wav(tmp_path):
+    """La voix des annonces est calculée par l'ordinateur et servie au téléphone en WAV."""
+    from visionaid.phone.certs import client_ssl_context
+    from visionaid.phone.server import PhoneServer
+
+    cfg = load_config(
+        overrides={
+            "phone.certs_dir": str(tmp_path / "certs"),
+            "phone.host": "127.0.0.1",
+            "phone.calib_dir": str(tmp_path / "calib"),
+        }
+    )
+    port = free_port()
+    with PhoneServer(cfg, https_port=port, http_port=0) as srv:
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            urllib.request.HTTPSHandler(context=client_ssl_context(srv.certs)),
+        )
+        q = urllib.parse.quote("Je cherche la gourde.")
+        with opener.open(f"https://localhost:{port}/tts?text={q}", timeout=30) as r:
+            wav = r.read()
+            assert r.headers["Content-Type"] == "audio/wav"
+        assert wav[:4] == b"RIFF" and len(wav) > 10_000
+        with pytest.raises(urllib.error.HTTPError):
+            opener.open(f"https://localhost:{port}/tts?text=", timeout=5)

@@ -281,12 +281,9 @@ class LiveGuidanceBlock:
         out = str(raw.get("_tts") or "phone")
         self.mac = None
         if out == "mac":
-            from visionaid.audio.tts import MacSpeaker
+            from visionaid.audio.tts import MacSpeaker, voice_kwargs
 
-            tts = getattr(cfg, "tts", None)
-            self.mac = MacSpeaker(
-                str(getattr(tts, "mac_voice", "Thomas")), int(getattr(tts, "mac_rate_wpm", 190))
-            )
+            self.mac = MacSpeaker(**voice_kwargs(getattr(cfg, "tts", None)))
         self._said: set[int] = set()
 
     def _on_command(self, cmd) -> None:
@@ -295,11 +292,10 @@ class LiveGuidanceBlock:
         self.cmd_seq = int(cmd.seq)
         self.commands.append({"t": cmd.t, "action": cmd.action, "text": cmd.text, "id": cmd.id})
         if cmd.action == "unknown":
-            from visionaid.perception.target import known_targets_phrase
-
             heard = f" « {cmd.text} »" if cmd.text else ""
             self.speech.say(
-                f"Je n'ai pas compris{heard}. Tu peux chercher {known_targets_phrase()}."
+                f"Je n'ai pas compris{heard}. Dis par exemple : je cherche mes clés, "
+                "ou je cherche la télécommande."
             )
             return
         if cmd.id == self.cmd_id:
@@ -507,8 +503,46 @@ class _RerunFanout:
                 pass
 
 
+class _SearchFlag:
+    """Mode avancé et recherche en cours, relus chaque seconde auprès du serveur du téléphone
+    (il les reçoit de l'application de l'ordinateur)."""
+
+    def __init__(self, raw: dict) -> None:
+        import threading
+
+        self.advanced = bool(raw.get("_advanced"))
+        self.guide = False
+        self.session_dir: str | None = None  # session enregistrée (la vue 3D y est gardée)
+        port, token = raw.get("_phone_https_port"), raw.get("_control_token")
+        if port and token:
+            args = (int(port), str(token), raw["phone"]["certs_dir"])
+            threading.Thread(target=self._poll, args=args, name="viz-flag", daemon=True).start()
+
+    def _poll(self, port: int, token: str, certs_dir: str) -> None:
+        import urllib.request
+
+        from visionaid.phone.certs import client_ssl_context, ensure_certs
+
+        ctx = client_ssl_context(ensure_certs(resolve_path(certs_dir)))
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=ctx)
+        )
+        url = f"https://127.0.0.1:{port}/control/state?token={token}"
+        while True:
+            try:
+                with opener.open(url, timeout=2) as r:
+                    st = json.loads(r.read())
+                self.advanced, self.guide = bool(st.get("advanced")), bool(st.get("guide"))
+                self.session_dir = st.get("session_dir")
+            except Exception:  # serveur pas encore prêt ou en cours d'arrêt
+                pass
+            time.sleep(1.0)
+
+
 class RerunLiveBlock:
-    """Visualisation Rerun : `live` (visualiseur lancé), `file` (.rrd) ou les deux (`both`).
+    """Visualisation Rerun : `live` (visualiseur lancé), `file` (.rrd), les deux (`both`), ou
+    `search` (application de l'ordinateur : en mode avancé, le visualiseur s'ouvre au lancement
+    de chaque recherche ; rien n'est calculé ni ouvert avant).
 
     Disposition fixe : monde 3D en grand (sol quadrillé, carte des obstacles posée au sol, nuage
     de points coloré par la hauteur, trajectoire, position et cap de l'utilisateur, chemin,
@@ -524,6 +558,12 @@ class RerunLiveBlock:
         # un flux par destination : fenêtre (spawn) et/ou fichier. Rerun 0.23 n'a pas
         # `set_sinks` : l'ancien mode « both » n'écrivait aucun fichier, sans le signaler
         streams = []
+        self.flag = _SearchFlag(raw) if mode == "search" else None
+        self.active = self.flag is None
+        self._failed = False
+        if mode == "search":
+            self._live = rr.RecordingStream("visionaid_live")
+            streams.append(self._live)
         if mode in ("live", "both"):
             live = rr.RecordingStream("visionaid_live")
             live.spawn()
@@ -535,14 +575,55 @@ class RerunLiveBlock:
         self.rr = _RerunFanout(rr, streams)
         self.out = out
         self.target_label = str((raw.get("target") or {}).get("name") or "cible")
-        self._blueprint()
-        self.rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
-        self._floor_grid()
+        if self.flag is None:
+            self._open()
         self.traj: list[np.ndarray] = []
         self.n = 0
         self.last_cm = None
         self.last_path = None
         self.last_depth_idx = None
+
+    def _open(self) -> None:
+        """Disposition, repère et sol (statiques) : à l'ouverture, ou à chaque recherche."""
+        self._blueprint()
+        self.rr.log("world", self.rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
+        self._floor_grid()
+
+    def _keep_in_session(self) -> None:
+        """Session enregistrée : la vue 3D est aussi écrite dans son dossier (`vue3d.rrd`),
+        une seule fois par lancement. Fermer la fenêtre Rerun ne perd donc rien ; on la
+        rouvre avec `rerun <session>/vue3d.rrd`."""
+        d = self.flag.session_dir if self.flag is not None else None
+        if not d or getattr(self, "_saved_to", None) == d:
+            return
+        from pathlib import Path
+
+        rec = self.rr._rr.RecordingStream("visionaid_live")
+        rec.save(str(Path(d) / "vue3d.rrd"))
+        self.rr._streams.append(rec)
+        self._saved_to = d
+
+    def _gate(self) -> bool:
+        """Mode `search` : vrai pendant une recherche en mode avancé ; ouvre le visualiseur
+        au lancement de chaque recherche (ou s'y reconnecte s'il est déjà ouvert)."""
+        if self.flag is None:
+            return True
+        on = self.flag.advanced and self.flag.guide
+        if not on:
+            self.active = self._failed = False
+            return False
+        if not self.active and not self._failed:
+            try:
+                self._live.spawn()
+                self._keep_in_session()
+                self._open()
+                self.active = True
+            except Exception as e:  # visualiseur introuvable : le guidage continue sans
+                import logging
+
+                logging.getLogger(__name__).warning("Rerun ne s'ouvre pas : %s", e)
+                self._failed = True
+        return self.active
 
     def _blueprint(self) -> None:
         try:
@@ -634,7 +715,7 @@ class RerunLiveBlock:
     def process(self, inputs: dict[str, Any]) -> dict[str, Any] | None:
         rr = self.rr
         f = inputs.get("frame")
-        if f is None:
+        if f is None or not self._gate():
             return None
         self.n += 1
         rr.set_time("t", duration=float(f.t))

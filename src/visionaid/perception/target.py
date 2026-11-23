@@ -39,6 +39,7 @@ class TargetSheet:
     keys: set[str] = field(default_factory=set)
     spoken: str = ""  # nom prononcé dans les annonces (« la gourde »)
     plural: bool = False
+    feminine: bool = False  # accord des textes de l'application (« trouvée »)
 
 
 def normalize(text: str) -> str:
@@ -80,6 +81,7 @@ def load_sheets(directory: str | Path | None = None) -> list[TargetSheet]:
         keys = {" ".join(content_words(x)) for x in phrases}
         keys.discard("")
         label = str(y.get("label", name))
+        spoken = str(y.get("spoken") or spoken_from_label(label))
         sheets.append(
             TargetSheet(
                 name,
@@ -88,15 +90,99 @@ def load_sheets(directory: str | Path | None = None) -> list[TargetSheet]:
                 y.get("overrides", {}),
                 p,
                 keys,
-                str(y.get("spoken") or spoken_from_label(label)),
+                spoken,
                 bool(y.get("plural", False)),
+                bool(y.get("feminine", spoken.startswith("la "))),
             )
         )
     return sheets
 
 
-def resolve_target(query: str, directory: str | Path | None = None) -> TargetSheet:
-    """Fiche correspondant à la phrase ; `UnknownTarget` (avec la liste des cibles) sinon."""
+# ------------------------------------------------------------------ objets courants
+VOCABULARY = "config/objects.yaml"
+
+
+def _label_from_spoken(spoken: str) -> str:
+    """« la télécommande » → « ma télécommande », « l'écharpe » → « mon écharpe »."""
+    for art, pos in (("les ", "mes "), ("la ", "ma "), ("le ", "mon "), ("l'", "mon ")):
+        if spoken.startswith(art):
+            return pos + spoken[len(art) :]
+    return spoken
+
+
+def load_vocabulary(path: str | Path | None = None) -> list[TargetSheet]:
+    """Objets courants (config/objects.yaml) sous forme de fiches « texte seul »."""
+    p = resolve_path(path or VOCABULARY)
+    if not Path(p).exists():
+        return []
+    out = []
+    for name, y in (yaml.safe_load(Path(p).read_text()) or {}).items():
+        spoken = str(y["dit"])
+        plural = spoken.startswith("les ")
+        fem = bool(y.get("fem", spoken.startswith("la ")))
+        phrases = [spoken] + [str(m) for m in y.get("mots", [])]
+        keys = {" ".join(content_words(x)) for x in phrases}
+        keys.discard("")
+        overrides = {
+            "target": {"name": str(name), "height_m": None},
+            "detector": {
+                "text_prompts": [str(e) for e in y["en"]],
+                "negative_prompts": [],
+            },
+            # photos data/ref/<nom>_*.jpg si on en dépose ; sinon reconnu par le texte seul
+            "paths": {"ref_glob": f"{name}_*.jpg"},
+            "reid": {
+                "color_model": "none",
+                "w_embed": 1.0,
+                "w_color": 0.0,
+                "threshold_file": f"config/reid_threshold_{name}.yaml",
+                "textonly_conf": float(y.get("conf", 0.30)),
+            },
+        }
+        out.append(
+            TargetSheet(
+                str(name),
+                _label_from_spoken(spoken),
+                phrases,
+                overrides,
+                Path(p),
+                keys,
+                spoken,
+                plural,
+                fem,
+            )
+        )
+    return out
+
+
+def _find_in(words: tuple[str, ...], key: tuple[str, ...]) -> int:
+    """Position de la suite de mots `key` dans `words` (-1 si absente)."""
+    n = len(key)
+    for i in range(len(words) - n + 1):
+        if words[i : i + n] == key:
+            return i
+    return -1
+
+
+def resolve_vocabulary(query: str, path: str | Path | None = None) -> TargetSheet | None:
+    """Objet courant nommé dans la phrase : le premier nommé, et le nom le plus long à égalité
+    (« le sac à dos » plutôt que « le sac », « la télécommande de la télé » → télécommande)."""
+    words = content_words(query)
+    best, best_rank = None, None
+    for sh in load_vocabulary(path):
+        for k in sh.keys:
+            kw = tuple(k.split())
+            i = _find_in(words, kw)
+            if i >= 0 and (best_rank is None or (i, -len(kw)) < best_rank):
+                best, best_rank = sh, (i, -len(kw))
+    return best
+
+
+def resolve_target(
+    query: str, directory: str | Path | None = None, vocabulary: bool = True
+) -> TargetSheet:
+    """Fiche correspondant à la phrase, sinon objet courant (`vocabulary`) ; `UnknownTarget`
+    (avec la liste des cibles) sinon."""
     sheets = load_sheets(directory)
     key = " ".join(content_words(query))
     if key:
@@ -107,8 +193,15 @@ def resolve_target(query: str, directory: str | Path | None = None) -> TargetShe
         partial = [s for s in sheets if any(set(k.split()) <= words for k in s.keys)]
         if len(partial) == 1:
             return partial[0]
+        if not partial and vocabulary:  # aucune fiche : objet courant ?
+            sh = resolve_vocabulary(query)
+            if sh is not None:
+                return sh
     known = ", ".join(f"« {s.label} »" for s in sheets) or "aucune"
-    raise UnknownTarget(f"cible inconnue pour « {query} ». Cibles disponibles : {known}.")
+    raise UnknownTarget(
+        f"cible inconnue pour « {query} ». Cibles disponibles : {known}, "
+        f"et les objets courants de {VOCABULARY}."
+    )
 
 
 def apply_target(raw: dict, query: str | None) -> dict:
@@ -146,19 +239,26 @@ def parse_command(texts, directory: str | Path | None = None) -> tuple[str, Targ
 
     Plusieurs transcriptions possibles (alternatives de la reconnaissance vocale) : la première
     qui désigne une fiche l'emporte. « Stop », « arrête », « j'ai trouvé » : fin de la recherche.
+    Ensuite seulement, les objets courants (config/objects.yaml) : « arrête, c'est sur la
+    table » reste un arrêt.
     """
     if isinstance(texts, str):
         texts = [texts]
     texts = [t for t in texts if t and t.strip()]
     for t in texts:
         try:
-            return "search", resolve_target(t, directory)
+            return "search", resolve_target(t, directory, vocabulary=False)
         except UnknownTarget:
             pass
+    # « c'est bon, elle est sur la table » : fin de recherche, pas une demande de table
     for t in texts:
         n = normalize(t)
         if set(n.split()) & STOP_WORDS or any(p in n for p in STOP_PHRASES):
             return "stop", None
+    for t in texts:
+        sh = resolve_vocabulary(t)
+        if sh is not None:
+            return "search", sh
     return "unknown", None
 
 

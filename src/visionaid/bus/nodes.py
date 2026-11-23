@@ -41,6 +41,24 @@ def _t_of(msg: Any) -> float | None:
     return getattr(msg, "t", None)
 
 
+def _exit_with_parent(stop_event, period_s: float = 1.0, grace_s: float = 5.0) -> None:
+    """Application tuée ou plantée : le nœud s'arrête aussi, au lieu de rester orphelin
+    et de garder ses ports (le lancement suivant ne pourrait plus démarrer)."""
+    import os
+    import threading
+
+    parent = os.getppid()
+
+    def watch() -> None:
+        while os.getppid() == parent:
+            time.sleep(period_s)
+        stop_event.set()
+        time.sleep(grace_s)
+        os._exit(0)  # arrêt propre trop long : on libère les ports quand même
+
+    threading.Thread(target=watch, name="parent-watch", daemon=True).start()
+
+
 def run_node(
     spec: NodeSpec,
     ports: dict[str, int],
@@ -51,6 +69,7 @@ def run_node(
 ) -> None:
     """Boucle d'un nœud (exécutée dans un sous-processus)."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)
+    _exit_with_parent(stop_event)
     block = load_factory(spec.factory)(cfg_raw)
     pub = Publisher(endpoint(ports[spec.name])) if spec.outputs else None
     subs: list[Subscriber] = []

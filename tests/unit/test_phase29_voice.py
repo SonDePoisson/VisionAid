@@ -61,7 +61,13 @@ def test_parse_command():
     assert parse_command("Je cherche ma gourde")[1].name == "gourde"
     assert parse_command(["euh", "où sont mes clés"])[1].name == "cles"
     assert parse_command("arrête")[0] == "stop"
-    assert parse_command("je cherche mon téléphone") == ("unknown", None)
+    assert parse_command("je cherche mon téléphone")[1].name == "telephone"
+    assert parse_command("je cherche ma licorne") == ("unknown", None)
+    # un arrêt reste un arrêt même s'il nomme un objet courant
+    assert parse_command("arrête, c'est sur la table") == ("stop", None)
+    # la transcription qui désigne un objet l'emporte sur une première incomprise
+    _, sh = parse_command(["euh", "où est ma télécommande"])
+    assert sh.name == "telecommande"
     assert parse_command("") == ("unknown", None)
     assert "gourde" in known_targets_phrase() and "clés" in known_targets_phrase()
 
@@ -269,7 +275,7 @@ def test_live_guidance_block_idle_then_search():
     assert out["sound"].mode == "search"
     assert out["sound"].speech.startswith("Je cherche la gourde")
     first_id = out["sound"].speech_id
-    bad = VoiceCommand(0.0, 1, "unknown", "téléphone", seq=2)
+    bad = VoiceCommand(0.0, 1, "unknown", "licorne", seq=2)
     blk.process({"pose_world": Pose(1.5, 2, T_facing(0)), "command": bad})
     out = blk.process({"pose_world": Pose(1.6, 3, T_facing(0)), "command": bad})
     assert out["sound"].mode == "search"  # la recherche continue

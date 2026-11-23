@@ -77,7 +77,30 @@
   #log { color:var(--muted); font-size:12px; white-space:pre-wrap; max-height:140px; overflow:auto; }
   input[type=range] { width:100%; accent-color:var(--ink); }
   h1[tabindex="-1"]:focus { outline:none; }
-  @media (prefers-reduced-motion: reduce) { .dir { transition:none; } }
+  /* attente : le rond reste au même endroit ; un point fait le tour de l'anneau (comme la
+     direction du guidage) et les ondes du logo s'allument l'une après l'autre */
+  .sweep { position:absolute; inset:8%; pointer-events:none; animation:sweep 6s linear infinite; }
+  .sweep::after { content:""; position:absolute; top:-9px; left:50%; margin-left:-9px; width:18px; height:18px; border-radius:50%;
+    background:var(--gold); box-shadow:0 0 0 5px rgba(242,165,65,.22); }
+  @keyframes sweep { to { transform:rotate(360deg); } }
+  .core.idle { background:var(--ink); gap:14px; font-size:26px; }
+  .core.idle .waves path { animation:wave 2.4s ease-in-out infinite; opacity:.25; }
+  .core.idle .waves path:nth-child(2) { animation-delay:.3s; }
+  .core.idle .waves path:nth-child(3) { animation-delay:.6s; }
+  @keyframes wave { 0%,100% { opacity:.25; } 35% { opacity:1; } }
+  .checks { list-style:none; margin:0 auto; padding:0; display:flex; flex-direction:column; gap:8px; width:min(100%, 320px); }
+  .checks li { display:flex; align-items:center; gap:12px; font-size:17px; color:var(--muted); }
+  .checks li::before { content:""; flex:none; width:22px; height:22px; border-radius:50%; box-sizing:border-box;
+    border:3px solid #cbbd9f; }
+  .checks li.ok { color:var(--ink); }
+  .checks li.ok::before { border:0; background:var(--ok) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 12.5l4 4 8-9' fill='none' stroke='%23fbf6ec' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/16px no-repeat; }
+  .checks li.wait { color:var(--ink); font-weight:700; }
+  .checks li.wait::before { border-color:var(--gold); border-top-color:transparent; animation:sweep 1.2s linear infinite; }
+  @media (prefers-reduced-motion: reduce) {
+    .dir { transition:none; }
+    .sweep, .checks li.wait::before { animation:none; }
+    .core.idle .waves path { animation:none; opacity:1; }
+  }
 </style>
 </head>
 <body>
@@ -104,11 +127,42 @@
   <p id="status" class="status center" role="status">Autorise la caméra et le micro. À faire une seule fois.</p>
 </main>
 
-<!-- 2. prêt : un seul grand rond « Parler » -->
+<!-- 2. attente : le guidage n'est pas encore lancé sur l'ordinateur -->
+<main class="screen" id="screenWait" hidden>
+  <div class="bar">
+    <div class="brand"><svg width="26" height="26" aria-hidden="true"><use href="#logo"></use></svg>VisionAId</div>
+    <span class="pill" data-conn>Connexion…</span>
+  </div>
+  <div>
+    <h1>Presque prêt.</h1>
+    <p class="muted" style="margin-top:8px">Le guidage se lance depuis l'ordinateur.</p>
+  </div>
+  <div class="grow">
+    <div class="rings"><span class="r1"></span><span class="r2"></span>
+      <span class="sweep" aria-hidden="true"></span>
+      <button class="core idle" id="waitCore" type="button" aria-label="En attente de l'ordinateur : toucher pour entendre où on en est">
+        <svg class="waves" width="78" height="72" viewBox="0 0 44 40" aria-hidden="true">
+          <circle cx="12" cy="20" r="5" fill="#fbf6ec"></circle>
+          <path d="M21 11a13 13 0 0 1 0 18" stroke="#f2a541" stroke-width="3" stroke-linecap="round" fill="none"></path>
+          <path d="M27 6a20 20 0 0 1 0 28" stroke="#f2a541" stroke-width="3" stroke-linecap="round" fill="none"></path>
+          <path d="M33 1.5a27 27 0 0 1 0 37" stroke="#f2a541" stroke-width="3" stroke-linecap="round" fill="none"></path>
+        </svg>
+        En attente
+      </button>
+    </div>
+  </div>
+  <ul class="checks" aria-live="polite">
+    <li class="ok">Caméra</li>
+    <li id="chkPc">Ordinateur</li>
+    <li id="chkGuide">Guidage lancé sur l'ordinateur</li>
+  </ul>
+</main>
+
+<!-- 3. prêt : un seul grand rond « Parler » -->
 <main class="screen" id="screenTalk" hidden>
   <div class="bar">
     <div class="brand"><svg width="26" height="26" aria-hidden="true"><use href="#logo"></use></svg>VisionAId</div>
-    <span class="pill" id="connPill">Connexion…</span>
+    <span class="pill" id="connPill" data-conn>Connexion…</span>
   </div>
   <h1>Que cherchez&#8209;vous&#160;?</h1>
   <div class="grow">
@@ -120,11 +174,11 @@
     </div>
   </div>
   <p id="heard" class="center" aria-live="polite"></p>
-  <p class="center muted" id="talkHint">Touchez le rond, puis dites «&#160;je cherche ma gourde&#160;».</p>
+  <p class="center muted" id="talkHint">Touchez le rond, puis dites ce que vous cherchez : «&#160;je cherche mes clés&#160;».</p>
   <p class="center"><span class="pill" id="levelPill" hidden>Téléphone bien droit</span></p>
 </main>
 
-<!-- 3. guidage : la distance dans le rond, la direction sur l'anneau -->
+<!-- 4. guidage : la distance dans le rond, la direction sur l'anneau -->
 <main class="screen" id="screenGuide" hidden>
   <div class="bar">
     <div class="brand"><svg width="26" height="26" aria-hidden="true"><use href="#logo"></use></svg>VisionAId</div>

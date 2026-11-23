@@ -166,13 +166,12 @@ class AudioRenderer:
             return out, None
         from visionaid.audio import tts
 
-        voice = str(getattr(self.tts, "mac_voice", "Thomas")) if self.tts is not None else "Thomas"
-        wpm = int(getattr(self.tts, "mac_rate_wpm", 190)) if self.tts is not None else 190
+        kw = tts.voice_kwargs(self.tts)
         cache = Path(self.tts_cache) if self.tts_cache is not None else None
         duck = np.ones(n)
         t_free = -math.inf
         for t, text, dk in items:
-            x = tts.synth(text, fs, voice, wpm, cache)
+            x = tts.synth(text, fs, cache_dir=cache, **kw)
             dur = len(x) / fs if x is not None else 0.08 * len(text)
             start = max(t, t_free)  # phrases à la suite, jamais superposées
             t_free = start + dur + 0.3

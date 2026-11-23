@@ -140,11 +140,12 @@
             <label id="modeVoice"><input type="radio" name="mode" value="voice">à la voix</label>
             <label id="modeHere"><input type="radio" name="mode" value="here">sur cet ordinateur</label>
           </div>
-          <p class="muted" style="margin:0" id="voiceHint">Sur le téléphone : appuyer sur Parler et dire «&#160;je cherche ma gourde&#160;».</p>
+          <p class="muted" style="margin:0" id="voiceHint">Sur le téléphone : appuyer sur Parler et dire ce qu'on cherche («&#160;je cherche mes lunettes&#160;»).</p>
           <div class="objects" id="objects" role="group" aria-label="Objet à trouver" hidden>
             <button type="button" data-object="gourde" aria-pressed="true">Ma gourde</button>
             <button type="button" data-object="cles" aria-pressed="false">Mes clés</button>
           </div>
+          <p class="muted" style="margin:0">Dans les deux cas, les annonces vocales sont dites dans le casque.</p>
         </fieldset>
         <div class="links">
           <a href="#headset" data-action="go-headset">Rejouer le test du casque</a>
@@ -211,8 +212,7 @@
       <div id="advBody" hidden>
         <ul class="rows">
           <li>
-            <div class="name"><span class="t" id="vizLabel">Vue 3D pendant le guidage</span><span>Image de la caméra, carte de la pièce et chemin calculé (Rerun).</span></div>
-            <button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="vizLabel" data-setting="viz"></button>
+            <div class="name"><span class="t">Vue 3D pendant la recherche</span><span>Rerun s'ouvre sur cet ordinateur au lancement de chaque recherche : carte de la pièce, chemin calculé, vue du téléphone et objet détecté. Rien ne change sur le téléphone.</span></div>
           </li>
           <li style="flex-direction:column;align-items:stretch">
             <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap">
@@ -224,7 +224,7 @@
           </li>
           <li style="flex-direction:column;align-items:stretch">
             <div id="restartNote" class="banner" hidden>
-              <span>La vue 3D et l'enregistrement changent au prochain démarrage du guidage.</span>
+              <span>L'enregistrement commence au prochain démarrage du guidage.</span>
               <button class="btn ghost" type="button" data-action="restart_engine">Redémarrer maintenant</button>
             </div>
             <div class="name"><span class="t">Signaler un problème</span><span>Le rapport contient la version, l'ordinateur et l'état du guidage, sans aucune image.</span></div>
@@ -258,6 +258,11 @@
             <li>Si une adresse ne marche pas, essayez une autre adresse affichée sous le code QR.</li>
             <li>Sous Windows, autorisez VisionAId quand le pare-feu le demande.</li>
             <li><a href="#phone" data-action="go-phone">Reconnecter le téléphone</a></li></ul></details>
+          <details><summary>Le téléphone redemande la caméra et le micro</summary><ul>
+            <li>Ouvrez la page dans Safari ou Chrome, à l'adresse https://visionaid.local:8443 : le choix est retenu pour cette adresse.</li>
+            <li>iPhone, dans Safari : touchez «&#160;aA&#160;» (ou le menu de la page) à côté de l'adresse › Réglages du site web › Caméra et Micro : Autoriser.</li>
+            <li>Android, dans Chrome : touchez l'icône à gauche de l'adresse › Autorisations › Caméra et Micro : Autoriser.</li>
+            <li>Sur iPhone, la page ajoutée à l'écran d'accueil n'a pas ces réglages : elle redemande à chaque ouverture. Préférez un favori Safari.</li></ul></details>
           <details><summary>Pas de son, ou le son vient du mauvais côté</summary><ul>
             <li>Vérifiez le volume du téléphone et la connexion du casque.</li>
             <li>Désactivez l'audio mono du téléphone (iPhone : Réglages › Accessibilité › Audio/Visuel ; Android : Paramètres › Accessibilité › Audio).</li>
@@ -265,7 +270,7 @@
             <li><a href="#headset" data-action="go-headset">Rejouer le test du casque</a></li></ul></details>
           <details><summary>VisionAId ne comprend pas la demande</summary><ul>
             <li>Parlez après le bip, dans un endroit calme.</li>
-            <li>Pour l'instant, VisionAId cherche la gourde et les clés : «&#160;je cherche ma gourde&#160;», «&#160;où sont mes clés&#160;».</li></ul></details>
+            <li>À la voix, VisionAId cherche les objets courants de la maison : clés, téléphone, lunettes, télécommande, tasse, portefeuille… Les clés sont reconnues sur leurs photos, c'est donc bien votre trousseau. Pour les autres objets, VisionAId va vers n'importe quel objet de ce type.</li></ul></details>
           <details><summary>L'objet n'est pas trouvé</summary><ul>
             <li>Tournez lentement sur vous-même : la caméra doit voir l'objet.</li>
             <li>Allumez la lumière : dans le noir, la caméra voit mal.</li>

@@ -34,6 +34,15 @@ def _empty(t: float, idx: int) -> Detections:
     return Detections(t, idx, np.zeros((0, 4), np.float32), np.zeros(0, np.float32), [])
 
 
+def _has_refs(cfg) -> bool:
+    """Photos de référence pour la cible (sinon ReID « texte seul », sans galerie)."""
+    if bool(getattr(cfg.reid, "text_only", False)):
+        return False
+    from visionaid.utils.config import resolve_path
+
+    return any(resolve_path(cfg.paths.ref_dir).glob(cfg.paths.ref_glob))
+
+
 class PerceptionBlock:
     """Image → Detections avec décision « cible » (piste confirmée).
 
@@ -108,8 +117,10 @@ class PerceptionBlock:
         det = self.detector
         if name not in self._targets:
             prompts = list(cfg.detector.text_prompts)
-            if hasattr(det, "set_prompts"):
-                det.set_prompts(prompts)  # galerie construite sans les meubles
+            if hasattr(det, "set_prompts") and _has_refs(cfg):
+                # galerie construite sans les meubles (inutile sans photo : on évite au
+                # détecteur une recompilation d'environ 1,4 s)
+                det.set_prompts(prompts)
             if hasattr(det, "conf"):
                 det.conf = float(cfg.detector.conf)
             reid = self.make_reid(cfg, det)

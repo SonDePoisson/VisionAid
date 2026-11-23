@@ -41,7 +41,7 @@ def test_spoken_request_then_announcements(tmp_path):
         rerun="off",
         warmup_s=4.0,
         stub_models=True,
-        fake_commands=[(2.0, "je cherche mon téléphone"), (4.0, "je cherche ma gourde")],
+        fake_commands=[(2.0, "je cherche ma licorne"), (4.0, "je cherche ma gourde")],
     )
     fp = s["fake_phone"][0]
     print(fp["speech"], fp["heard"], s["guidance"])

@@ -1,0 +1,81 @@
+# Objets courants qu'on peut demander à la voix, en plus des fiches de config/targets/.
+#
+# Une fiche (gourde, clés) l'emporte toujours : elle a des photos de référence et des réglages
+# calibrés. Pour un objet de cette liste, le détecteur cherche les mots anglais `en` et
+# toute détection assez sûre est la cible (pas de photos : deux télécommandes se confondent).
+# Déposer des photos data/ref/<nom>_*.jpg suffit pour reconnaître SON objet.
+#
+#   dit  : nom prononcé dans les annonces, avec son article (« la télécommande »)
+#   mots : façons de le dire (le nom lui-même est déjà compris via `dit`)
+#   en   : mots du détecteur (anglais)
+#   fem  : féminin, à préciser seulement après « l' » ou « les »
+#   conf : confiance minimale de détection (défaut : 0.30)
+
+telecommande: {dit: la télécommande, mots: [zapette], en: [remote control, tv remote]}
+telephone: {dit: le téléphone, mots: [portable, smartphone, iphone, mobile], en: [cell phone, smartphone]}
+lunettes: {dit: les lunettes, fem: true, en: [eyeglasses, glasses, sunglasses]}
+portefeuille: {dit: le portefeuille, mots: [porte monnaie, porte-monnaie], en: [wallet, purse]}
+sac_a_dos: {dit: le sac à dos, mots: [cartable], en: [backpack]}
+sac: {dit: le sac, mots: [sac à main, sacoche], en: [handbag, bag]}
+canne: {dit: la canne, mots: [canne blanche], en: [walking cane, white cane, walking stick]}
+tasse: {dit: la tasse, mots: [mug], en: [mug, cup]}
+verre: {dit: le verre, en: [drinking glass, glass]}
+bouteille: {dit: la bouteille, en: [bottle]}
+thermos: {dit: le thermos, en: [thermos, flask]}
+assiette: {dit: l'assiette, fem: true, en: [plate]}
+bol: {dit: le bol, en: [bowl]}
+couteau: {dit: le couteau, en: [knife]}
+fourchette: {dit: la fourchette, en: [fork]}
+cuillere: {dit: la cuillère, mots: [petite cuillère], en: [spoon]}
+casserole: {dit: la casserole, en: [cooking pot, saucepan]}
+poele: {dit: la poêle, en: [frying pan]}
+bouilloire: {dit: la bouilloire, en: [kettle]}
+livre: {dit: le livre, mots: [bouquin], en: [book]}
+carnet: {dit: le carnet, mots: [cahier, agenda], en: [notebook]}
+stylo: {dit: le stylo, mots: [crayon, feutre], en: [pen, pencil]}
+ciseaux: {dit: les ciseaux, en: [scissors]}
+ordinateur: {dit: l'ordinateur, mots: [ordi, pc, laptop, macbook, ordinateur portable], en: [laptop, computer]}
+tablette: {dit: la tablette, mots: [ipad], en: [tablet]}
+clavier: {dit: le clavier, en: [keyboard]}
+souris: {dit: la souris, en: [computer mouse]}
+casque: {dit: le casque, mots: [casque audio], en: [headphones]}
+ecouteurs: {dit: les écouteurs, mots: [airpods, oreillettes], en: [earbuds, earphones]}
+chargeur: {dit: le chargeur, mots: [câble, cable], en: [phone charger, charging cable]}
+montre: {dit: la montre, en: [wristwatch, watch]}
+parapluie: {dit: le parapluie, en: [umbrella]}
+chaussures: {dit: les chaussures, fem: true, mots: [chaussure, baskets, chaussons, pantoufles], en: [shoes, sneakers, slippers]}
+veste: {dit: la veste, mots: [manteau, blouson], en: [jacket, coat]}
+chapeau: {dit: le chapeau, mots: [casquette, bonnet], en: [hat, cap, beanie]}
+echarpe: {dit: l'écharpe, fem: true, mots: [foulard], en: [scarf]}
+gants: {dit: les gants, en: [gloves]}
+medicaments: {dit: les médicaments, mots: [médicament, pilulier, boîte de médicaments], en: [medicine box, pill bottle]}
+brosse_a_dents: {dit: la brosse à dents, en: [toothbrush]}
+brosse: {dit: la brosse, mots: [brosse à cheveux, peigne], en: [hairbrush, comb]}
+serviette: {dit: la serviette, en: [towel]}
+boite: {dit: la boîte, mots: [carton], en: [box]}
+ballon: {dit: le ballon, mots: [balle], en: [ball]}
+jouet: {dit: le jouet, en: [toy]}
+peluche: {dit: la peluche, mots: [doudou, nounours], en: [teddy bear, stuffed animal]}
+coussin: {dit: le coussin, mots: [oreiller], en: [pillow, cushion]}
+couverture: {dit: la couverture, mots: [plaid], en: [blanket]}
+lampe: {dit: la lampe, en: [lamp]}
+plante: {dit: la plante, en: [potted plant]}
+reveil: {dit: le réveil, mots: [horloge, pendule], en: [alarm clock, clock]}
+valise: {dit: la valise, en: [suitcase]}
+pomme: {dit: la pomme, en: [apple]}
+banane: {dit: la banane, en: [banana]}
+television: {dit: la télévision, mots: [télé, tv], en: [television, tv]}
+chaise: {dit: la chaise, en: [chair]}
+fauteuil: {dit: le fauteuil, en: [armchair]}
+canape: {dit: le canapé, en: [couch, sofa]}
+table: {dit: la table, en: [table]}
+lit: {dit: le lit, en: [bed]}
+poubelle: {dit: la poubelle, en: [trash can]}
+porte: {dit: la porte, en: [door]}
+fenetre: {dit: la fenêtre, en: [window]}
+frigo: {dit: le frigo, mots: [réfrigérateur], en: [refrigerator]}
+micro_ondes: {dit: le micro-ondes, en: [microwave]}
+evier: {dit: l'évier, en: [sink]}
+toilettes: {dit: les toilettes, fem: true, mots: [wc], en: [toilet]}
+chat: {dit: le chat, en: [cat]}
+chien: {dit: le chien, en: [dog]}

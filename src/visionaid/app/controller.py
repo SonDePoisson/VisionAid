@@ -38,14 +38,23 @@ def _free_port() -> int:
         return int(so.getsockname()[1])
 
 
+def _port_taken(port: int) -> bool:
+    with socket.socket() as so:
+        so.settimeout(0.5)
+        return so.connect_ex(("127.0.0.1", port)) == 0
+
+
 def phone_urls(port: int) -> list[str]:
-    """Adresses à ouvrir sur le téléphone : adresses IP d'abord (tous les téléphones les
-    comprennent), puis le nom Bonjour en « .local » (iPhone, Mac)."""
-    from visionaid.phone.certs import host_names, reachable_ips, url_host
+    """Adresses à ouvrir sur le téléphone : https://visionaid.local (annoncé par le serveur du
+    téléphone, dans le processus du guidage), puis les adresses IP en secours (téléphones sans
+    mDNS). Sert quand le serveur ne donne pas encore ses adresses (démarrage, erreur) : on
+    affiche quand même l'adresse fixe, celle que le téléphone a mémorisée."""
+    from visionaid.phone.certs import reachable_ips, url_host
+    from visionaid.phone.mdns import BONJOUR_HOST, available
 
     ips = reachable_ips()
-    hosts = [i for i in ips if ":" not in i] + [url_host(i) for i in ips if ":" in i]
-    hosts += [n for n in host_names() if n.endswith(".local")]
+    hosts = [BONJOUR_HOST] if available() else []
+    hosts += [i for i in ips if ":" not in i] + [url_host(i) for i in ips if ":" in i]
     return [f"https://{h}:{port}/" for h in hosts] or [f"https://localhost:{port}/"]
 
 
@@ -65,6 +74,16 @@ def open_folder(path) -> bool:
         return True
     except OSError:
         return False
+
+
+def de(spoken: str) -> str:
+    """« le téléphone » → « du téléphone », « les clés » → « des clés », « la gourde » →
+    « de la gourde »."""
+    if spoken.startswith("le "):
+        return "du " + spoken[3:]
+    if spoken.startswith("les "):
+        return "des " + spoken[4:]
+    return "de " + spoken
 
 
 def side_text(angle_deg: float) -> str:
@@ -106,7 +125,8 @@ class AppController:
         self.engine_error = ""
         self.runner = None
         self.phone: dict[str, Any] = {"connected": False}
-        self.guiding = False
+        self.guiding = False  # copie de l'état du serveur du téléphone (seule référence)
+        self.search_target = ""  # objet de la recherche en cours ("" : rien demandé encore)
         self.guide_t0 = 0.0
         self._found_t = 0.0
         self._last_state = ""
@@ -140,7 +160,8 @@ class AppController:
             _tts="phone",
             _live_clock=True,
             _stub_models=self.stub_models,
-            _rerun="live" if s["advanced"] and s["viz"] else "off",
+            # mode avancé : Rerun s'ouvre au lancement de chaque recherche (jamais en test)
+            _rerun="off" if fake else "search",
             _control_token=self.token,
             _levels=levels_db(s["volumes"]),
             _advanced=bool(s["advanced"]),
@@ -179,12 +200,17 @@ class AppController:
 
         try:
             raw = self.raw
+            port = int(raw["_phone_https_port"])
+            if _port_taken(port):  # sinon on parlerait à l'ancien serveur, sans le savoir
+                raise RuntimeError(
+                    f"le port {port} est déjà pris : un ancien VisionAid tourne encore. "
+                    "Quittez-le (ou redémarrez l'ordinateur), puis relancez"
+                )
             specs = graph(raw, "phone", raw["_rerun"])
             self.runner = GraphRunner(
                 specs, raw, base_port=int(raw["bus"]["base_port"]), stop_timeout_s=10.0
             )
             self.runner.start()
-            port = int(raw["_phone_https_port"])
             if not _wait_port(port, 120.0):
                 raise RuntimeError("le serveur du téléphone n'a pas démarré")
             self._ssl = client_ssl_context(ensure_certs(resolve_path(raw["phone"]["certs_dir"])))
@@ -217,6 +243,9 @@ class AppController:
         self._stop.set()
         if self.guiding:
             self._control({"action": "stop"})
+        # le téléphone revient sur sa page de démarrage et se tait (plus de son « perdu »)
+        if self._control({"action": "quit"}):
+            time.sleep(0.3)  # le temps que le message parte avant la fermeture du serveur
         if self.runner is not None:
             try:
                 self.runner.stop()
@@ -263,15 +292,17 @@ class AppController:
             self._stop.wait(0.25)
 
     def _follow_phone(self, st: dict) -> None:
-        """Demandes dites sur le téléphone : l'application suit (démarrer / arrêter)."""
-        heard = st.get("heard") or {}
-        t_heard = float(heard.get("wall") or 0)
-        if t_heard > getattr(self, "_t_heard", 0):
-            self._t_heard = t_heard
-            if heard.get("action") == "search" and not self.guiding:
-                self.guiding, self.guide_t0 = True, time.time()
-            elif heard.get("action") == "stop":
-                self.guiding = False
+        """L'état du guidage vient du serveur du téléphone, qui le partage avec le téléphone :
+        lancé ou non, et objet cherché (choisi ici ou dit au téléphone). L'application et le
+        téléphone affichent donc toujours la même situation."""
+        guide = bool(st.get("guide"))
+        if guide and not self.guiding:
+            self.guide_t0, self._found_t, self._last_state = time.time(), 0.0, ""
+        self.guiding = guide
+        target = str((st.get("search") or {}).get("target") or "") if guide else ""
+        if target != self.search_target:
+            self._found_t, self._last_state = 0.0, ""
+        self.search_target = target
         snd = st.get("sound") or {}
         state = str(snd.get("state") or "")
         if state != self._last_state:
@@ -293,13 +324,14 @@ class AppController:
             payload: dict[str, Any] = {"action": "start", "mode": mode}
             if mode == "here":
                 payload["text"] = OBJECTS[obj]["phrase"]
-            with self._lock:
+            with self._lock:  # tout de suite à l'écran ; le serveur confirme au prochain relevé
                 self.guiding, self.guide_t0 = True, time.time()
+                self.search_target = obj if mode == "here" else ""
                 self._found_t, self._last_state = 0.0, ""
             return {"ok": True, "sent": self._control(payload)}
         if name == "stop":
             with self._lock:
-                self.guiding = False
+                self.guiding, self.search_target = False, ""
             return {"ok": True, "sent": self._control({"action": "stop"})}
         if name == "test_sound":
             return {"ok": True, "sent": self._control({"action": "test_sound"})}
@@ -318,9 +350,7 @@ class AppController:
             return {"ok": True}
         if name == "settings":
             allowed = {k: v for k, v in args.items() if k in ("mode", "object", "volumes")}
-            allowed.update(
-                {k: bool(v) for k, v in args.items() if k in ("advanced", "viz", "record")}
-            )
+            allowed.update({k: bool(v) for k, v in args.items() if k in ("advanced", "record")})
             snap = s.update(**allowed)
             if "volumes" in allowed:
                 self._control({"action": "levels", "levels": levels_db(snap["volumes"])})
@@ -336,6 +366,7 @@ class AppController:
                 self.runner = None
             with self._lock:
                 self.engine = "stopped"
+                self.guiding, self.search_target = False, ""
             self.raw = self._build_raw()
             self.start_engine()
             return {"ok": True}
@@ -346,6 +377,7 @@ class AppController:
         with self._lock:
             phone = dict(self.phone)
             guiding, t0 = self.guiding, self.guide_t0
+            search_target = self.search_target
             found_t = self._found_t
             engine, engine_error = self.engine, self.engine_error
         port = int(self.raw["_phone_https_port"])
@@ -361,33 +393,37 @@ class AppController:
                 "fps": phone.get("fps"),
                 "imu_hz": phone.get("imu_hz"),
                 "rtt_ms": phone.get("rtt_ms"),
-                "urls": phone_urls(port) if self.fake_phone is None else [self._url("/")],
+                "urls": (phone.get("urls") or phone_urls(port))
+                if self.fake_phone is None
+                else [self._url("/")],
             },
             "settings": settings,
             "headset_today": settings.get("headset_tested") == today,
             "guiding": guiding,
             "elapsed_s": int(time.time() - t0) if guiding else 0,
-            "guide": self._guide_view(phone, guiding, found_t, settings),
+            "guide": self._guide_view(phone, guiding, found_t, search_target),
             "fake_phone": self.fake_phone is not None,
         }
 
-    def _guide_view(self, phone: dict, guiding: bool, found_t: float, settings: dict) -> dict:
+    def _guide_view(self, phone: dict, guiding: bool, found_t: float, target: str) -> dict:
         now = float(phone.get("now") or time.time())
         heard = phone.get("heard") or {}
         speech = phone.get("speech") or {}
         snd = phone.get("sound") or {}
         fresh = snd and now - float(snd.get("wall") or 0) < LIVE_MAX_AGE_S
         state = str(snd.get("state") or "IDLE") if fresh else "IDLE"
-        target = heard.get("target") or (settings["object"] if settings["mode"] == "here" else "")
-        obj = OBJECTS.get(target)
-        spoken = obj["spoken"] if obj else "l'objet"
-        plural = bool(obj and obj["plural"])
+        # objet choisi ici (OBJECTS) ou dit au téléphone (nom donné par le serveur)
+        srch = phone.get("search") or {}
+        obj = OBJECTS.get(target) or (srch if srch.get("spoken") else None)
+        spoken = str(obj["spoken"]) if obj else "l'objet"
+        plural = bool(obj and obj.get("plural"))
+        fem = bool(obj and obj.get("feminine"))
         Spoken = spoken[:1].upper() + spoken[1:]
-        searching_asked = heard.get("action") == "search" or settings["mode"] == "here"
+        found = "trouvé" + ("e" if fem else "") + ("s" if plural else "")
 
         if not guiding:
             phase = "off"
-        elif state == "SEARCHING" or (state == "IDLE" and searching_asked and target):
+        elif state == "SEARCHING" or (state == "IDLE" and target):
             phase = "recherche"
         elif state == "IDLE":
             phase = "ecoute"
@@ -409,11 +445,11 @@ class AppController:
                 "La personne appuie sur Parler sur le téléphone et dit ce qu'elle cherche.",
             ),
             "recherche": (
-                f"Recherche de {spoken}.",
+                f"Recherche {de(spoken)}.",
                 "Tourner lentement sur soi-même. Le son de recherche joue dans le casque.",
             ),
             "trouve": (
-                f"{Spoken} trouvée." if not plural else f"{Spoken} trouvées.",
+                f"{Spoken} {found}.",
                 "La position est annoncée dans le casque.",
             ),
             "route": (f"En route vers {spoken}.", "Suivre le son du chemin."),

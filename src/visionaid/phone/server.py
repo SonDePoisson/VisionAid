@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 import time
 from collections import deque
@@ -60,6 +61,7 @@ class ServerStats:
     frame_times: deque = field(default_factory=lambda: deque(maxlen=200))
     imu_times: deque = field(default_factory=lambda: deque(maxlen=2000))
     last_hello: dict = field(default_factory=dict)
+    events: list = field(default_factory=list)  # incidents signalés par le téléphone
 
     def rate(self, times: deque, window: float = 2.0) -> float:
         """Cadence (Hz) sur les `window` dernières secondes."""
@@ -107,8 +109,9 @@ class PhoneServer:
         self.on_control = on_control
         self.control_token = control_token
         self.levels: dict | None = None  # volumes réglés dans l'application (par son, en dB)
-        self.advanced = False  # mode avancé : outils de test affichés sur le téléphone
+        self.advanced = False  # mode avancé : vue 3D sur l'ordinateur, rien sur le téléphone
         self.guide = False  # guidage demandé depuis l'ordinateur
+        self.search: dict | None = None  # recherche en cours (objet), pour une reconnexion
         self.live: dict[str, Any] = {"sound": None, "speech": None, "heard": None}
         pc = cfg.phone
         h = host if host is not None else pc.host
@@ -145,10 +148,41 @@ class PhoneServer:
             raise TimeoutError("le serveur téléphone n'a pas démarré")
         if self._error is not None:
             raise RuntimeError(f"échec du démarrage du serveur : {self._error}")
+        if (
+            self.host is None
+        ):  # toutes les interfaces, joignable depuis le réseau : nom visionaid.local
+            from visionaid.phone.certs import reachable_ips
+            from visionaid.phone.mdns import Announcer
+
+            self._mdns = Announcer(self.https_port)
+            self._mdns.start(reachable_ips())
+        if not os.environ.get("PYTEST_CURRENT_TEST"):  # tests : pas de modèle de voix chargé
+            threading.Thread(target=self._warm_voice, name="tts-warm", daemon=True).start()
         return self
+
+    # phrases fixes de la page du téléphone : prêtes avant d'être demandées
+    WARM_PHRASES = (
+        "Téléphone prêt. Le guidage se lance depuis l'ordinateur.",
+        "Connexion à l'ordinateur en cours.",
+        "Appuie sur le grand bouton Parler, puis dis ce que tu cherches.",
+        "D'accord, j'arrête la recherche.",
+        "VisionAId est fermé sur l'ordinateur.",
+    )
+
+    def _warm_voice(self) -> None:
+        """Charge la voix et prépare les phrases fixes (le cache disque les garde ensuite)."""
+        from visionaid.audio.tts import voice_kwargs, warm
+
+        kw = voice_kwargs(self.cfg.tts)
+        warm(kw["engine"], kw["pocket_language"], kw["pocket_voice"])
+        for text in self.WARM_PHRASES:
+            self._synth_wav(text)
 
     def stop(self, timeout: float = 5.0) -> None:
         """Arrête le serveur et ferme l'enregistrement."""
+        if getattr(self, "_mdns", None) is not None:
+            self._mdns.stop()
+            self._mdns = None
         if self._loop is not None and not self._stopped.is_set():
             fut = asyncio.run_coroutine_threadsafe(self._shutdown(), self._loop)
             try:
@@ -202,6 +236,7 @@ class PhoneServer:
         app.router.add_get("/ws", self._websocket)
         app.router.add_get("/calib/board", self._board)
         app.router.add_get("/ca.crt", self._ca)
+        app.router.add_get("/tts", self._tts)
         app.router.add_static("/static/", WEB_DIR)
         app.router.add_static("/fonts/", FONTS_DIR)
         app.router.add_post("/control", self._control)
@@ -234,6 +269,12 @@ class PhoneServer:
             await asyncio.sleep(period_s)
             try:
                 names, ips = host_names(), local_ips()
+                if getattr(self, "_mdns", None) is not None:
+                    from visionaid.phone.certs import reachable_ips
+
+                    await asyncio.get_running_loop().run_in_executor(
+                        None, self._mdns.update, reachable_ips()
+                    )
                 if server_cert_covers(self.certs, names, ips):
                     continue
                 self.certs = ensure_certs(resolve_path(self.cfg.phone.certs_dir), names, ips)
@@ -256,6 +297,45 @@ class PhoneServer:
             await self._runner.cleanup()
         if getattr(self, "_plain_runner", None) is not None:
             await self._plain_runner.cleanup()
+
+    # ------------------------------------------------------------------ voix
+    # Sur iPhone, la synthèse vocale du navigateur coupe la caméra (constaté : image figée à
+    # chaque phrase). La voix est donc faite sur l'ordinateur (`say` de macOS) et jouée par le
+    # téléphone avec les autres sons (Web Audio), sans toucher à la caméra.
+    async def _speech_wav(self, text: str) -> bytes | None:
+        cache = self.__dict__.setdefault("_tts_cache", {})
+        fut = cache.get(text)
+        if fut is None:
+            fut = asyncio.get_running_loop().run_in_executor(None, self._synth_wav, text)
+            cache[text] = fut
+            if len(cache) > 300:  # les phrases se répètent ; on garde les 300 dernières
+                cache.pop(next(iter(cache)))
+        return await asyncio.shield(fut)
+
+    def _synth_wav(self, text: str) -> bytes | None:
+        import io
+
+        import soundfile as sf
+
+        from visionaid.audio.tts import available, synth, voice_kwargs
+
+        if not available():
+            return None
+        x = synth(text, 24000, cache_dir=resolve_path(".cache/tts"), **voice_kwargs(self.cfg.tts))
+        if x is None:
+            return None
+        buf = io.BytesIO()
+        sf.write(buf, x, 24000, format="WAV", subtype="PCM_16")
+        return buf.getvalue()
+
+    async def _tts(self, request: web.Request) -> web.Response:
+        text = request.query.get("text", "").strip()[:400]
+        wav = await self._speech_wav(text) if text else None
+        if wav is None:  # pas de `say` (Windows, Linux) : le téléphone utilise sa propre voix
+            return web.Response(status=404)
+        return web.Response(
+            body=wav, content_type="audio/wav", headers={"Cache-Control": "max-age=86400"}
+        )
 
     # ------------------------------------------------------------------ pages
     async def _index(self, request: web.Request) -> web.Response:
@@ -387,6 +467,19 @@ class PhoneServer:
         """Envoie un message JSON au téléphone (appelable depuis n'importe quel thread)."""
         if obj.get("type") == "heard":
             self.live["heard"] = dict(obj, wall=time.time())
+            # demande dite sur le téléphone : l'application de l'ordinateur la suit aussi
+            if obj.get("action") == "search":
+                self.guide, self.search = (
+                    True,
+                    {
+                        "target": obj.get("target") or "",
+                        "spoken": obj.get("spoken") or "",
+                        "plural": bool(obj.get("plural")),
+                        "feminine": bool(obj.get("feminine")),
+                    },
+                )
+            elif obj.get("action") == "stop":
+                self.guide, self.search = False, None
         ws, loop = self._ws, self._loop
         if ws is None or ws.closed or loop is None:
             return False
@@ -394,7 +487,10 @@ class PhoneServer:
         return True
 
     def send_speech(self, sid: int, text: str, duck: bool = False) -> bool:
-        """Phrase à dire par le téléphone (synthèse vocale du navigateur, dans le casque)."""
+        """Phrase à dire par le téléphone, dans le casque. La voix est calculée ici (`/tts`,
+        préparée dès maintenant) : le téléphone la joue comme les autres sons."""
+        if self._loop is not None and text:
+            asyncio.run_coroutine_threadsafe(self._speech_wav(text), self._loop)
         ok = self.send_json({"type": "speech", "id": int(sid), "text": text, "duck": bool(duck)})
         self.live["speech"] = {"id": int(sid), "text": text, "wall": time.time()}
         if ok:
@@ -410,6 +506,7 @@ class PhoneServer:
             "levels": self.levels,
             "advanced": self.advanced,
             "guide": self.guide,
+            "search": self.search,
             "controlled": bool(self.control_token),  # piloté par l'application de l'ordinateur
             "protocol": PROTOCOL_VERSION,
             "session": self.recorder.dir.name if self.recorder else None,
@@ -475,6 +572,12 @@ class PhoneServer:
             self.stats.n_command += 1
             if self.on_command is not None:
                 self.on_command(obj)
+        elif typ == "event":  # incident signalé par le téléphone (ex. caméra figée, relancée)
+            text = str(obj.get("text", ""))[:300]
+            log.warning("Téléphone : %s", text)
+            self.stats.events.append({"t": now, "text": text})
+            if self.recorder is not None:
+                self.recorder.update_meta(events=self.stats.events[-50:])
         elif typ == "notes" and self.recorder is not None:
             self.recorder.update_meta(notes=str(obj.get("text", ""))[:2000])
         else:
@@ -549,6 +652,9 @@ class PhoneServer:
     def control(self, obj: dict) -> bool:
         """Action demandée par l'application de l'ordinateur ; True si transmise au téléphone."""
         action = obj.get("action")
+        if action == "quit":  # l'application de l'ordinateur se ferme
+            self.guide, self.search = False, None
+            return self.send_json({"type": "quit"})
         if action == "test_sound":
             return self.send_json({"type": "test_sound"})
         if action == "preview":
@@ -561,6 +667,8 @@ class PhoneServer:
             return self.send_json({"type": "advanced", "on": self.advanced})
         if action in ("start", "stop"):
             self.guide = action == "start"
+            if not self.guide:
+                self.search = None
             if self.on_control is not None:
                 self.on_control(obj)
             return self.send_json({"type": "guide", "on": self.guide, "mode": obj.get("mode")})
@@ -581,12 +689,15 @@ class PhoneServer:
         return {
             "ok": True,
             "connected": self.connected(),
+            "urls": self.urls(),
             "fps": round(self.stats.rate(self.stats.frame_times), 1),
             "imu_hz": round(self.stats.rate(self.stats.imu_times), 1),
             "rtt_ms": round(c.rtt * 1e3, 1) if c.rtt else None,
             "n_frames": self.stats.n_frames,
             "guide": self.guide,
+            "search": self.search,
             "advanced": self.advanced,
+            "session_dir": str(self.recorder.dir) if self.recorder else None,
             "now": time.time(),
             **self.live,
         }
@@ -600,10 +711,21 @@ class PhoneServer:
         return cache[(w, h)]
 
     def urls(self) -> list[str]:
-        """URLs HTTPS à ouvrir sur le téléphone : nom Bonjour (.local) d'abord, puis adresses."""
-        from visionaid.phone.certs import host_names, reachable_ips, url_host
+        """URLs HTTPS à ouvrir sur le téléphone : visionaid.local (Bonjour) d'abord, puis
+        les adresses. Gardées 5 s : l'application de l'ordinateur les lit plusieurs fois par seconde."""
+        cached = getattr(self, "_urls_cache", None)
+        if cached is not None and time.monotonic() - cached[0] < 5.0:
+            return cached[1]
+        urls = self._compute_urls()
+        self._urls_cache = (time.monotonic(), urls)
+        return urls
 
-        hosts = [n for n in host_names() if n.endswith(".local")]
+    def _compute_urls(self) -> list[str]:
+        from visionaid.phone.certs import host_names, reachable_ips, url_host
+        from visionaid.phone.mdns import BONJOUR_HOST, announced
+
+        hosts = [BONJOUR_HOST] if announced() else []
+        hosts += [n for n in host_names() if n.endswith(".local") and n != BONJOUR_HOST]
         ips = reachable_ips()
         hosts += [i for i in ips if ":" not in i] + [url_host(i) for i in ips if ":" in i]
         return [f"https://{h}:{self.https_port}/" for h in hosts] or [

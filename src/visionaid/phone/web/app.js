@@ -12,13 +12,14 @@ const ui = {
   sound: $("sound"), volume: $("volume"), volumeOut: $("volumeOut"), testSound: $("testSound"),
   talk: $("talk"), talkLabel: $("talkLabel"), talkHint: $("talkHint"), heard: $("heard"),
   typed: $("typed"), sendTyped: $("sendTyped"),
-  connPill: $("connPill"), levelPill: $("levelPill"), advanced: $("advanced"),
+  connPills: document.querySelectorAll("[data-conn]"), waitCore: $("waitCore"),
+  chkPc: $("chkPc"), chkGuide: $("chkGuide"), levelPill: $("levelPill"), advanced: $("advanced"),
   guideTalk: $("guideTalk"), stopGuide: $("stopGuide"), gTitle: $("gTitle"), gDist: $("gDist"),
   gSide: $("gSide"), dirDot: $("dirDot"), phasePill: $("phasePill"),
-  screens: { connect: $("screenConnect"), talk: $("screenTalk"), guide: $("screenGuide") },
+  screens: { connect: $("screenConnect"), wait: $("screenWait"), talk: $("screenTalk"), guide: $("screenGuide") },
 };
 // Objets connus : nom dit dans les titres (le PC envoie le nom de la fiche).
-const OBJECTS = { gourde: "la gourde", cles: "les clés" };
+const OBJECTS = { gourde: "la gourde", cles: "les clés" }; // si l'ordinateur ne donne pas le nom
 const audio = window.guideAudio;
 audio.onStatus = (text, cls) => { ui.sound.textContent = text; ui.sound.className = cls || ""; };
 
@@ -34,11 +35,12 @@ const state = {
   pings: new Map(), lastRtt: null, lastRttId: null, reconnectDelay: 500, timers: [], hasImu: false,
   canvas: document.createElement("canvas"),
   voice: null, greeted: false, listening: null, spokenIds: new Set(),
-  screen: "connect", controlled: false, target: "", guideState: "",
+  screen: "connect", controlled: false, guideOn: false, searching: false, target: "", guideState: "",
 };
 
 // ------------------------------------------------------------------ écrans
-// connexion (Démarrer) → Parler → guidage (distance et direction) ; un seul visible à la fois.
+// connexion (Démarrer) → attente → Parler → guidage (distance et direction) ; un seul visible.
+// Piloté par l'application de l'ordinateur, le téléphone attend que le guidage y soit lancé.
 function showScreen(name) {
   if (state.screen === name) return;
   state.screen = name;
@@ -48,26 +50,87 @@ function showScreen(name) {
 }
 
 function setConn(text, cls) {
-  ui.connPill.textContent = text;
-  ui.connPill.className = "pill" + (cls ? " " + cls : "");
+  for (const el of ui.connPills) {
+    el.textContent = text;
+    el.className = "pill" + (cls ? " " + cls : "");
+  }
+  ui.chkPc.className = cls === "ok" ? "ok" : "wait";
+  ui.chkPc.textContent = cls === "ok" ? "Ordinateur connecté" : "Connexion à l'ordinateur…";
+  ui.chkGuide.className = cls === "ok" ? "wait" : "";
+  ui.chkGuide.textContent = cls === "ok" ? "Guidage : en attente" : "Guidage lancé sur l'ordinateur";
 }
 
-function setAdvanced(on) {
-  ui.advanced.hidden = !on;
-  ui.video.classList.toggle("offscreen", !on);
+// Écran attendu, déduit d'un seul état (le même que celui de l'ordinateur) :
+// - piloté par l'ordinateur et guidage pas lancé → attente ;
+// - une recherche est en cours (dite au téléphone, ou objet choisi sur l'ordinateur) → guidage,
+//   tout de suite, même avant la première consigne sonore ;
+// - sinon (guidage lancé, à la voix, rien demandé encore) → Parler.
+function expectedScreen() {
+  if (state.controlled && !state.guideOn) return "wait";
+  return state.searching ? "guide" : "talk";
+}
+
+function syncScreen() {
+  if (!state.running) return;
+  const s = expectedScreen();
+  if (s === "wait") stopListening(true); // on peut parler sur Parler et pendant le guidage
+  if (s === "guide" && state.screen !== "guide") showSearching();
+  showScreen(s);
+}
+
+// Recherche lancée : titre « Je cherche … » en attendant la première consigne du PC.
+function showSearching() {
+  const obj = objName();
+  ui.gTitle.textContent = `Je cherche ${obj}.`;
+  ui.phasePill.textContent = "Recherche";
+  ui.gDist.textContent = "…";
+  ui.gSide.textContent = "tournez lentement";
+  ui.dirDot.style.opacity = "0";
+  state.guideState = "SEARCHING";
+}
+
+function setGuideOn(on) {
+  state.guideOn = on;
+  if (!on) state.searching = false;
+  syncScreen();
+}
+
+function objName() {
+  return state.spoken || OBJECTS[state.target] || "l'objet";
+}
+
+function setSearch(search) {
+  state.searching = !!search;
+  if (search && search.target) {
+    state.target = search.target;
+    state.spoken = search.spoken || "";
+  }
+  syncScreen();
+}
+
+function waitMessage() {
+  if (!state.ws || ui.chkPc.className !== "ok") return "Connexion à l'ordinateur en cours.";
+  return "Téléphone prêt. Le guidage se lance depuis l'ordinateur.";
+}
+
+// Outils de test du téléphone : seulement avec « ?outils » dans l'adresse. Le mode avancé de
+// l'ordinateur ne change rien ici (il ouvre Rerun sur l'ordinateur).
+const TOOLS = new URLSearchParams(location.search).has("outils");
+function setAdvanced() {
+  ui.advanced.hidden = !TOOLS;
+  ui.video.classList.toggle("offscreen", !TOOLS);
 }
 
 // Consigne du PC → écran de guidage (titres courts : la voix dit le détail dans le casque).
 function updateGuide(m) {
   const st = m.state || "IDLE";
   if (!state.running) return;
-  if (st === "IDLE" || m.mode === "silent" && st !== "ARRIVED" && m.dist === null) {
-    if (state.screen === "guide") showScreen("talk");
-    state.guideState = st;
-    return;
-  }
-  showScreen("guide");
-  const obj = OBJECTS[state.target] || "l'objet";
+  // l'écran suit l'état (attente / Parler / guidage), jamais l'inverse : une consigne en retard
+  // ou au repos (IDLE) ne fait pas changer d'écran
+  // lancement en ligne de commande (sans l'application) : la consigne suffit à passer en guidage
+  if (!state.controlled && !state.searching && st !== "IDLE") setSearch({});
+  if (!state.searching || state.screen !== "guide" || st === "IDLE") return;
+  const obj = objName();
   const searching = st === "SEARCHING";
   const titles = {
     SEARCHING: [`Je cherche ${obj}.`, "Recherche"],
@@ -111,6 +174,63 @@ function setStatus(text, cls) {
   ui.status.className = cls || "";
 }
 
+// ------------------------------------------------------------------ caméra
+function openCamera() {
+  return navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: {
+      facingMode: { ideal: "environment" },
+      // 4:3 (champ complet du capteur) ; le navigateur tourne l'image selon l'orientation
+      width: { ideal: cfg.capture_width }, height: { ideal: cfg.capture_height },
+      frameRate: { ideal: 30 },
+    },
+  });
+}
+
+// iOS peut couper la caméra sans le dire (son, voix, appel…) : la vidéo garde alors sa
+// dernière image. Une image figée envoyée au PC est pire que rien (le PC croit que la
+// personne ne bouge pas alors que les capteurs disent le contraire) : on ne l'envoie pas
+// et on rouvre la caméra.
+function watchTracks(stream) {
+  for (const t of stream.getVideoTracks()) {
+    t.onended = () => restartCamera("piste terminée");
+    t.onmute = () => setTimeout(() => { if (t.muted) restartCamera("piste coupée"); }, 500);
+  }
+}
+
+async function restartCamera(why) {
+  if (!state.running || state.restarting) return;
+  if (performance.now() - (state.lastRestart || 0) < 3000) return; // pas de relance en boucle
+  state.restarting = true;
+  state.lastRestart = performance.now();
+  const info = `caméra figée (${why}) ; son=${navigator.audioSession ? navigator.audioSession.type : "?"}` +
+    `, voix=${audio.speakingNow() ? "ordinateur" : window.speechSynthesis && speechSynthesis.speaking ? "navigateur" : "non"}, écran=${state.screen}`;
+  log("Caméra relancée : " + info);
+  send({ type: "event", text: info });
+  try {
+    if (state.stream) state.stream.getTracks().forEach((t) => t.stop());
+    state.stream = await openCamera();
+    watchTracks(state.stream);
+    ui.video.srcObject = state.stream;
+    await ui.video.play().catch(() => {});
+  } catch (e) {
+    log("Caméra impossible à rouvrir : " + e);
+    send({ type: "event", text: "caméra impossible à rouvrir : " + (e.name || e) });
+  } finally {
+    state.sameFrames = 0;
+    state.lastSig = "";
+    state.restarting = false;
+  }
+}
+
+// Empreinte d'une image JPEG : deux images identiques au bit près = caméra figée (un vrai
+// capteur a toujours un peu de bruit).
+function jpegSig(b) {
+  let h = b.length;
+  for (let i = 0; i < b.length; i += 61) h = (h * 31 + b[i]) | 0;
+  return `${b.length}:${h}`;
+}
+
 // ------------------------------------------------------------------ démarrage
 async function start() {
   if (!window.isSecureContext) {
@@ -123,6 +243,8 @@ async function start() {
   }
   ui.start.disabled = true;
   state.greeted = false;
+  state.waitSpoken = false;
+  state.guideOn = state.searching = false;
   // iOS : le son ne se déverrouille que dans le geste de l'utilisateur, avant toute attente
   audio.unlock();
   // iOS : la permission des capteurs doit être demandée dans le geste de l'utilisateur, en premier.
@@ -137,15 +259,7 @@ async function start() {
   window.addEventListener("devicemotion", onMotion);
 
   try {
-    state.stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: {
-        facingMode: { ideal: "environment" },
-        // 4:3 (champ complet du capteur) ; le navigateur tourne l'image selon l'orientation
-        width: { ideal: cfg.capture_width }, height: { ideal: cfg.capture_height },
-        frameRate: { ideal: 30 },
-      },
-    });
+    state.stream = await openCamera();
   } catch (e) {
     const why = {
       NotAllowedError: "accès à la caméra refusé (Réglages → Safari → Caméra)",
@@ -157,6 +271,7 @@ async function start() {
     ui.start.disabled = false;
     return;
   }
+  watchTracks(state.stream);
   ui.video.srcObject = state.stream;
   await ui.video.play().catch(() => {});
   await new Promise((res) => (ui.video.videoWidth ? res() : ui.video.addEventListener("loadedmetadata", res, { once: true })));
@@ -165,7 +280,7 @@ async function start() {
   document.addEventListener("visibilitychange", onVisibility);
 
   state.running = true;
-  showScreen("talk");
+  showScreen("wait"); // jusqu'au « welcome » : piloté par l'ordinateur ou non
   audio.start();
   ui.stop.disabled = false;
   ui.capture.disabled = false;
@@ -194,6 +309,7 @@ function stop() {
   ui.stop.disabled = true;
   ui.capture.disabled = true;
   state.greeted = false;
+  state.waitSpoken = false;
   showScreen("connect");
   setStatus("Arrêté. Touchez Démarrer pour reprendre.", "");
 }
@@ -240,13 +356,26 @@ function connect() {
       setStatus(m.session ? `Connecté — enregistrement « ${m.session} »` : "Connecté", "ok");
       setConn("Connecté", "ok");
       state.controlled = !!m.controlled;
+      const firstWelcome = state.screen === "wait" && !state.waitSpoken;
+      state.guideOn = !!m.guide;
+      setSearch(m.guide || !state.controlled ? m.search : null); // reconnexion : même écran qu'avant
+      if (firstWelcome && state.screen === "wait") {
+        state.waitSpoken = true;
+        audio.speak(waitMessage(), false);
+      }
       audio.setLevels(m.levels);
-      setAdvanced(!!m.advanced);
+      setAdvanced();
       audio.configure(m.audio).then(() => { ui.testSound.disabled = !audio.ready; });
       onVoiceSettings(m.voice);
     } else if (m.type === "sound") {
       audio.onSound(m);
       updateGuide(m);
+    } else if (m.type === "quit") {
+      // VisionAId fermé sur l'ordinateur : silence, retour à la page de démarrage
+      audio.cancelSpeech();
+      stop();
+      setStatus("VisionAId a été fermé sur l'ordinateur. Touchez Démarrer quand il sera relancé.", "warn");
+      audio.speak("VisionAId est fermé sur l'ordinateur.", false);
     } else if (m.type === "test_sound") {
       audio.unlock();
       if (audio.test()) log("Test du son demandé par l'ordinateur.");
@@ -255,8 +384,9 @@ function connect() {
     } else if (m.type === "levels") {
       audio.setLevels(m.levels);
     } else if (m.type === "advanced") {
-      setAdvanced(!!m.on);
+      setAdvanced();
     } else if (m.type === "guide") {
+      setGuideOn(!!m.on);
       // guidage lancé depuis l'ordinateur, à la voix : on invite à parler
       if (m.on && m.mode !== "here" && state.voice && state.voice.mode === "stt") {
         audio.speak("Appuie sur le grand bouton Parler, puis dis ce que tu cherches.", false);
@@ -269,7 +399,13 @@ function connect() {
       }
     } else if (m.type === "heard") {
       ui.heard.textContent = m.text ? `Compris : « ${m.text} »` : "Rien entendu";
-      if (m.action === "search" && m.target) state.target = m.target;
+      if (m.action === "search") {
+        if (state.controlled) state.guideOn = true;
+        setSearch({ target: m.target, spoken: m.spoken });
+      } else if (m.action === "stop") {
+        if (state.controlled) setGuideOn(false);
+        else setSearch(null);
+      }
       log(`Demande : « ${m.text} » → ${m.action}${m.target ? " (" + m.target + ")" : ""}`);
     } else if (m.type === "ack") {
       state.waitingAck = false;
@@ -390,6 +526,17 @@ function sendFrame(tPhone, calib) {
     try {
       if (!blob || !state.ws || state.ws.readyState !== WebSocket.OPEN) return;
       const jpeg = new Uint8Array(await blob.arrayBuffer());
+      if (!calib) {
+        const sig = jpegSig(jpeg);
+        if (sig === state.lastSig) {
+          state.sameFrames = (state.sameFrames || 0) + 1;
+          state.lastSend = performance.now(); // même cadence d'essai, sans rien envoyer
+          if (state.sameFrames >= 8) restartCamera("image identique");
+          return;
+        }
+        state.lastSig = sig;
+        state.sameFrames = 0;
+      }
       const hdr = new TextEncoder().encode(JSON.stringify({ type: "frame", seq, t_phone: tPhone, w, h, calib }));
       const buf = new Uint8Array(4 + hdr.length + jpeg.length);
       new DataView(buf.buffer).setUint32(0, hdr.length, false);
@@ -432,6 +579,11 @@ function talk() {
   audio.unlock();
   if (state.listening) { stopListening(false); return; }
   audio.cancelSpeech();
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    ui.heard.textContent = "Micro inaccessible dans ce navigateur : écris l'objet ci-dessous";
+    return;
+  }
+  audio.recording(true); // avant toute demande de micro, toujours dans le geste
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (state.voice && state.voice.stt === "phone" && SR) recognize(SR);
   else record();
@@ -450,7 +602,7 @@ function recognize(SR) {
   r.lang = (state.voice && state.voice.lang) || "fr-FR";
   r.interimResults = false;
   r.maxAlternatives = 3;
-  let done = false;
+  let done = false, fallback = false;
   r.onresult = (e) => {
     done = true;
     const alts = Array.from(e.results[0] || []).map((a) => a.transcript);
@@ -458,12 +610,16 @@ function recognize(SR) {
     send({ type: "command", text: alts[0] || "", alternatives: alts.slice(1), source: "safari" });
   };
   r.onerror = (e) => {
-    log("Reconnaissance de Safari : " + e.error + " → enregistrement envoyé au PC");
+    log("Reconnaissance du navigateur : " + e.error + " → enregistrement envoyé au PC");
     done = true;
-    setListening(null);
-    if (e.error !== "aborted") record();
+    fallback = e.error !== "aborted";
   };
-  r.onend = () => { if (state.listening && state.listening.rec === r) setListening(null); if (!done) ui.heard.textContent = "Rien entendu"; audio.resume(); };
+  r.onend = () => {
+    if (state.listening && state.listening.rec === r) setListening(null);
+    if (fallback) { record(); return; } // la session reste en « play-and-record »
+    if (!done) ui.heard.textContent = "Rien entendu";
+    audio.recording(false);
+  };
   setListening({ rec: r, stop: () => r.stop() });
   audio.beep();
   r.start();
@@ -474,8 +630,9 @@ async function record() {
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
   } catch (e) {
-    ui.heard.textContent = "Micro refusé (Réglages → Safari → Micro)";
-    log("Micro : " + e);
+    audio.recording(false);
+    ui.heard.textContent = "Micro : " + micError(e);
+    log("Micro : " + e.name + " " + (e.message || ""));
     return;
   }
   const types = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm", "audio/ogg"];
@@ -483,6 +640,7 @@ async function record() {
   let rec;
   try { rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined); } catch (e) {
     stream.getTracks().forEach((t) => t.stop());
+    audio.recording(false);
     ui.heard.textContent = "Enregistrement impossible sur ce navigateur";
     return;
   }
@@ -515,7 +673,7 @@ async function record() {
     try { if (srcNode) srcNode.disconnect(); } catch (e) { /* déjà déconnecté */ }
     stream.getTracks().forEach((t) => t.stop()); // micro coupé tout de suite
     setListening(null);
-    audio.resume();
+    audio.recording(false);
     const blob = new Blob(chunks, { type: rec.mimeType || mime || "audio/mp4" });
     if (!blob.size) { ui.heard.textContent = "Rien entendu"; return; }
     ui.heard.textContent = "Je réfléchis…";
@@ -525,6 +683,29 @@ async function record() {
   setListening({ rec, stop: finish });
   audio.beep();
   rec.start();
+}
+
+// Raison lisible d'un refus du micro, avec où le réautoriser selon le navigateur.
+function isIOS() {
+  const ua = navigator.userAgent;
+  return /iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+function micError(e) {
+  const ua = navigator.userAgent;
+  const ios = isIOS();
+  const where = ios
+    ? "Réglages → Safari → Micro → Demander, puis recharge la page"
+    : /Android/.test(ua)
+      ? "touche le cadenas à côté de l'adresse → Autorisations → Micro, puis recharge la page"
+      : "autorise le micro pour ce site (icône à côté de l'adresse), puis recharge la page";
+  return {
+    NotAllowedError: "accès refusé (" + where + ")",
+    SecurityError: "accès refusé (" + where + ")",
+    NotFoundError: "aucun micro trouvé",
+    NotReadableError: "micro déjà utilisé par une autre application",
+    AbortError: "micro indisponible pour l'instant, réessaie",
+  }[e.name] || e.message || String(e);
 }
 
 function stopListening(abort) {
@@ -553,12 +734,16 @@ function sendTyped() {
 // ------------------------------------------------------------------ boutons
 ui.start.addEventListener("click", start);
 ui.talk.addEventListener("click", talk);
+ui.waitCore.addEventListener("click", () => {
+  audio.unlock();
+  audio.cancelSpeech();
+  audio.speak(waitMessage(), false);
+});
 ui.guideTalk.addEventListener("click", talk);
 ui.stopGuide.addEventListener("click", () => {
   audio.unlock();
   audio.cancelSpeech();
   send({ type: "command", text: "stop", source: "bouton" });
-  showScreen("talk");
 });
 ui.sendTyped.addEventListener("click", sendTyped);
 ui.typed.addEventListener("keydown", (e) => { if (e.key === "Enter") sendTyped(); });

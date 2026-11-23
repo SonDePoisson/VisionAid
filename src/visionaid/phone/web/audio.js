@@ -150,37 +150,115 @@ class GuideAudio {
 
   resume() { if (this.ctx) this.ctx.resume(); }
 
-  // Phrase dite dans le casque. `duck` : chemin suspendu jusqu'à la fin de la phrase.
+  // iOS ≥ 16.4 : en session « playback », Safari refuse le micro sans même le demander.
+  // On passe en « play-and-record » le temps d'écouter (dans le geste du bouton), puis on revient.
+  recording(on) {
+    try {
+      if (navigator.audioSession) navigator.audioSession.type = on ? "play-and-record" : "playback";
+    } catch (e) { /* ancien iOS ou autre navigateur */ }
+    if (!on) this.resume();
+  }
+
+  // Phrase dite dans le casque, à la suite des précédentes. `duck` : chemin suspendu de
+  // l'annonce jusqu'à la fin de la phrase.
+  // La voix est calculée par l'ordinateur (`/tts`) et jouée ici comme les autres sons : sur
+  // iPhone, la synthèse vocale du navigateur coupe la caméra. Elle ne sert plus qu'en secours
+  // (ordinateur sans voix française, réseau coupé).
   speak(text, duck) {
-    const ss = window.speechSynthesis;
-    if (!ss || !text) return;
-    const u = new SpeechSynthesisUtterance(text);
-    const vdb = (Number.isFinite(this.levels.voix) ? this.levels.voix : 0) + (Number.isFinite(this.levels.general) ? this.levels.general : 0);
-    u.volume = Math.max(0, Math.min(1, Math.pow(10, vdb / 20)));
-    u.lang = this.voiceLang || "fr-FR";
-    u.rate = this.voiceRate || 1;
-    const voices = ss.getVoices ? ss.getVoices() : [];
-    const lang = u.lang.toLowerCase();
-    const v = voices.find((x) => x.lang && x.lang.toLowerCase() === lang && x.localService)
-      || voices.find((x) => x.lang && x.lang.toLowerCase().startsWith(lang.slice(0, 2)));
-    if (v) u.voice = v;
-    if (duck) {
-      this.speaking += 1;
-      // garde-fou : jamais plus que la durée probable de la phrase (≈ 14 caractères/s) + 3 s
-      this.duckUntil = Math.max(this.duckUntil, performance.now() + (text.length / 14) * 1000 / u.rate + 3000);
-      const end = () => {
-        this.speaking = Math.max(0, this.speaking - 1);
-        if (!this.speaking) this.duckUntil = performance.now() + 300;
-      };
-      u.onend = end; u.onerror = end;
-    }
-    this.resume();
-    ss.speak(u); // à la suite des phrases déjà en cours
+    if (!text) return;
+    const gen = this.voiceGen || 0;
+    const clip = this._voiceClip(text); // téléchargement lancé tout de suite, joué à son tour
+    if (duck) this.speaking += 1;
+    this.voiceQueue = (this.voiceQueue || Promise.resolve()).then(async () => {
+      try {
+        if (gen !== (this.voiceGen || 0)) return; // annulée entre-temps
+        const buf = await clip;
+        if (gen !== (this.voiceGen || 0)) return;
+        if (buf) await this._playVoice(buf);
+        else await this._speakBrowser(text);
+      } finally {
+        if (duck && gen === (this.voiceGen || 0)) {
+          this.speaking = Math.max(0, this.speaking - 1);
+          if (!this.speaking) this.duckUntil = performance.now() + 300; // le rythme repart
+        }
+      }
+    });
   }
 
   cancelSpeech() {
+    this.voiceGen = (this.voiceGen || 0) + 1;
+    this.voiceQueue = Promise.resolve();
+    if (this.voiceSrc) { try { this.voiceSrc.stop(); } catch (e) { /* déjà finie */ } this.voiceSrc = null; }
     try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) { /* rien */ }
     this.speaking = 0; this.duckUntil = 0;
+  }
+
+  speakingNow() { return !!this.voiceSrc; }
+
+  _voiceClip(text) {
+    this.voiceCache = this.voiceCache || new Map();
+    let p = this.voiceCache.get(text);
+    if (!p) {
+      p = (async () => {
+        if (!this.ctx) return null;
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 6000);
+        try {
+          const r = await fetch(`/tts?text=${encodeURIComponent(text)}`, { signal: ctl.signal });
+          if (!r.ok) return null;
+          const ab = await r.arrayBuffer();
+          return await new Promise((res, rej) => this.ctx.decodeAudioData(ab, res, rej));
+        } catch (e) {
+          return null;
+        } finally {
+          clearTimeout(timer);
+        }
+      })();
+      p.then((b) => { if (!b) this.voiceCache.delete(text); });
+      this.voiceCache.set(text, p);
+      if (this.voiceCache.size > 100) this.voiceCache.delete(this.voiceCache.keys().next().value);
+    }
+    return p;
+  }
+
+  _playVoice(buf) {
+    return new Promise((resolve) => {
+      const c = this.ctx, src = c.createBufferSource(), g = c.createGain();
+      src.buffer = buf;
+      const vdb = Number.isFinite(this.levels.voix) ? this.levels.voix : 0;
+      g.gain.value = Math.pow(10, vdb / 20);
+      src.connect(g); g.connect(this.master); // volume général et du téléphone compris
+      const done = () => { src.disconnect(); g.disconnect(); if (this.voiceSrc === src) this.voiceSrc = null; resolve(); };
+      src.onended = done;
+      this.resume();
+      this.voiceSrc = src;
+      src.start(c.currentTime + 0.02);
+      setTimeout(done, buf.duration * 1000 + 2000); // garde-fou : jamais bloqué
+    });
+  }
+
+  // Secours : voix du navigateur (iOS : peut figer la caméra un instant, relancée par l'app).
+  _speakBrowser(text) {
+    return new Promise((resolve) => {
+      const ss = window.speechSynthesis;
+      if (!ss) { resolve(); return; }
+      const u = new SpeechSynthesisUtterance(text);
+      const vdb = (Number.isFinite(this.levels.voix) ? this.levels.voix : 0) + (Number.isFinite(this.levels.general) ? this.levels.general : 0);
+      u.volume = Math.max(0, Math.min(1, Math.pow(10, vdb / 20)));
+      u.lang = this.voiceLang || "fr-FR";
+      u.rate = this.voiceRate || 1;
+      const voices = ss.getVoices ? ss.getVoices() : [];
+      const lang = u.lang.toLowerCase();
+      const v = voices.find((x) => x.lang && x.lang.toLowerCase() === lang && x.localService)
+        || voices.find((x) => x.lang && x.lang.toLowerCase().startsWith(lang.slice(0, 2)));
+      if (v) u.voice = v;
+      let over = false;
+      const end = () => { if (!over) { over = true; resolve(); } };
+      u.onend = end; u.onerror = end;
+      setTimeout(end, (text.length / 14) * 1000 / u.rate + 1500); // iOS oublie parfois la fin
+      this.resume();
+      ss.speak(u);
+    });
   }
 
   // Bip court : « parle maintenant ».
@@ -262,6 +340,11 @@ class GuideAudio {
 
   _tick() {
     if (!this.ready || !this.active) return;
+    // iOS suspend la sortie audio après le micro, une phrase ou un appel : on la relance
+    if (this.ctx.state !== "running" && performance.now() - (this._resumeTry || 0) > 1000) {
+      this._resumeTry = performance.now();
+      this.ctx.resume().catch(() => {});
+    }
     if (!this.loop) this._startLoop(); // sons chargés après Démarrer
     const now = this.ctx.currentTime;
     let mode = this.cmd ? this.cmd.mode : "silent";
@@ -270,7 +353,7 @@ class GuideAudio {
       mode = "lost";
       if (this.prevMode !== "lost") this._setObstacle(this.cfg.lost_obstacle_db);
     }
-    const ducked = performance.now() < this.duckUntil;
+    const ducked = this.speaking > 0 || performance.now() < this.duckUntil;
     if ((mode === "guide" || mode === "search") && !ducked) {
       // nouveau rythme dès le passage recherche ↔ chemin
       if (mode !== this.prevMode || this.next < now) this.next = now + 0.02;

@@ -3,6 +3,7 @@ name: cles
 label: mes clés
 spoken: les clés          # nom prononcé dans les annonces
 plural: true
+feminine: true
 phrases:
   - où sont mes clés
   - mes clés

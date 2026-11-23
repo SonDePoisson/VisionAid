@@ -238,7 +238,10 @@ tts:
   output: auto            # auto (téléphone en direct, haut-parleur du Mac en rejeu) | phone | mac | off
   lang: fr-FR
   rate: 1.05              # débit de la voix du téléphone (1 = normal)
-  mac_voice: Thomas       # voix française de macOS (`say -v '?' | grep fr_`) : rejeu et rendu hors ligne
+  engine: pocket          # pocket (Pocket TTS de Kyutai, voix neuronale sur le processeur) | say
+  pocket_language: french # petit modèle français (rapide) ; french_24l : plus lent
+  pocket_voice: estelle   # voix prédéfinie, ou fichier audio d'une voix à copier
+  mac_voice: Thomas       # secours : voix française de macOS (`say -v '?' | grep fr_`)
   mac_rate_wpm: 190
   hold_s: 1.0             # une phrase reste sur les consignes pendant ce délai (pertes de messages)
 

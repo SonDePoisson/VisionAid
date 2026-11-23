@@ -38,12 +38,14 @@ OBJECTS: dict[str, dict[str, Any]] = {
         "phrase": "je cherche ma gourde",
         "spoken": "la gourde",
         "plural": False,
+        "feminine": True,
     },
     "cles": {
         "label": "Mes clés",
         "phrase": "où sont mes clés",
         "spoken": "les clés",
         "plural": True,
+        "feminine": True,
     },
 }
 

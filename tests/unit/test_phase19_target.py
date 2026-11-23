@@ -37,7 +37,7 @@ def test_phrase_variants(q, name):
     assert resolve_target(q).name == name
 
 
-@pytest.mark.parametrize("q", ["où est mon téléphone", "", "???", "ma gourde et mes clés"])
+@pytest.mark.parametrize("q", ["où est ma licorne", "", "???", "ma gourde et mes clés"])
 def test_unknown_or_ambiguous_phrase_lists_targets(q):
     with pytest.raises(UnknownTarget) as e:
         resolve_target(q)
@@ -94,3 +94,42 @@ def test_text_only_reid_uses_detector_confidence():
     assert r.threshold == pytest.approx(0.25)
     sc = r.score_detections(None, np.zeros((2, 4)), None, np.array([0.1, 0.6]))
     np.testing.assert_allclose(sc, [0.1, 0.6])
+
+
+@pytest.mark.parametrize(
+    "q,name,spoken",
+    [
+        ("je cherche mon téléphone", "telephone", "le téléphone"),
+        ("où est mon portable", "telephone", "le téléphone"),
+        ("où est la télécommande de la télé", "telecommande", "la télécommande"),
+        ("mon sac à dos", "sac_a_dos", "le sac à dos"),
+        ("mon sac", "sac", "le sac"),
+        ("je cherche mon porte-monnaie", "portefeuille", "le portefeuille"),
+        ("où sont mes lunettes", "lunettes", "les lunettes"),
+        ("je cherche l'ordinateur", "ordinateur", "l'ordinateur"),
+    ],
+)
+def test_common_objects(q, name, spoken):
+    sh = resolve_target(q)
+    assert (sh.name, sh.spoken) == (name, spoken)
+    cfg = load_config_for_target(q)
+    assert cfg.target.name == name and cfg.reid.color_model == "none"
+    assert cfg.detector.text_prompts == sh.overrides["detector"]["text_prompts"]
+
+
+def test_sheets_win_over_common_objects():
+    assert resolve_target("ma bouteille d'eau").name == "gourde"
+    assert resolve_target("mes clés").name == "cles"
+
+
+def test_vocabulary_is_well_formed():
+    from visionaid.perception.target import load_vocabulary
+
+    vocab = load_vocabulary()
+    assert len(vocab) > 40
+    owner = {}
+    for sh in vocab:
+        assert sh.overrides["detector"]["text_prompts"], sh.name
+        assert sh.spoken.split(" ")[0] in ("le", "la", "les") or sh.spoken.startswith("l'")
+        for k in sh.keys:  # une façon de dire = un seul objet
+            assert owner.setdefault(k, sh.name) == sh.name, (k, owner[k], sh.name)
