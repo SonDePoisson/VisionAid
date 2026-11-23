@@ -19,7 +19,9 @@
   :focus-visible { outline:3px solid var(--gold-dark); outline-offset:3px; }
   [hidden] { display:none !important; }
   button { font:inherit; color:inherit; }
-  .screen { min-height:100svh; padding:calc(env(safe-area-inset-top) + 28px) 24px calc(env(safe-area-inset-bottom) + 28px);
+  /* Les trois écrans ont exactement la même hauteur et le rond est placé au même endroit
+     (centre à 54 % de la hauteur, même taille) : la personne touche toujours au même endroit. */
+  .screen { position:relative; height:100svh; min-height:560px; padding:calc(env(safe-area-inset-top) + 28px) 24px calc(env(safe-area-inset-bottom) + 28px);
     display:flex; flex-direction:column; gap:16px; max-width:520px; margin:0 auto; }
   .bar { display:flex; align-items:center; justify-content:space-between; gap:12px; }
   .brand { display:flex; align-items:center; gap:8px; font:700 19px var(--display); }
@@ -32,13 +34,14 @@
   .muted { color:var(--muted); }
   .center { text-align:center; }
   .grow { flex:1; display:flex; align-items:center; justify-content:center; }
-  .rings { position:relative; width:min(342px, 88vw); aspect-ratio:1; display:flex; align-items:center; justify-content:center; }
+  .rings { position:absolute; left:50%; top:54%; transform:translate(-50%, -50%);
+    width:min(342px, 88vw, 44svh); aspect-ratio:1; display:flex; align-items:center; justify-content:center; }
   .rings .r1 { position:absolute; inset:0; border-radius:50%; border:2px solid rgba(22,35,59,.1); }
   .rings .r2 { position:absolute; inset:8%; border-radius:50%; border:3px solid rgba(201,122,18,.45); }
   .core { position:relative; width:73%; aspect-ratio:1; border-radius:50%; border:0; background:var(--ink); color:var(--cream);
     display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; box-shadow:0 16px 36px -14px rgba(22,35,59,.6);
     font:700 32px var(--display); cursor:pointer; -webkit-tap-highlight-color:transparent; }
-  .core:active { transform:scale(.98); }
+  .core:active { filter:brightness(1.15); }
   .core:disabled { opacity:.5; }
   .core.listening { background:var(--gold); color:var(--ink); }
   .core .dist { font-size:60px; line-height:1; }
