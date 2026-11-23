@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VisionAId</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="logo" viewBox="0 0 40 40"><circle cx="12" cy="20" r="5" fill="#16233b"></circle><path d="M21 11a13 13 0 0 1 0 18" stroke="#16233b" stroke-width="3" stroke-linecap="round" fill="none"></path><path d="M27 6a20 20 0 0 1 0 28" stroke="#c97a12" stroke-width="3" stroke-linecap="round" fill="none"></path></symbol>
+  <symbol id="check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="#1d6b3c" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path></symbol>
+  <symbol id="play" viewBox="0 0 24 24"><path d="M8 4.5v15l12-7.5z"></path></symbol>
+</svg>
+
+<div class="page">
+  <!-- en-tête : étapes de mise en route, menu, ou guidage en cours -->
+  <header class="top">
+    <div class="brand"><svg width="32" height="32" aria-hidden="true"><use href="#logo"></use></svg>VisionAId</div>
+    <div class="steps" id="setupSteps" hidden>
+      <span id="stepText">Étape 1 sur 3</span>
+      <div class="bars" aria-hidden="true"><span></span><span></span><span></span></div>
+    </div>
+    <nav class="nav" id="nav" aria-label="Navigation principale" hidden>
+      <a href="#home" data-tab="home">Accueil</a>
+      <a href="#sounds" data-tab="sounds">Sons</a>
+      <a href="#help" data-tab="help">Aide</a>
+      <a href="#advanced" data-tab="advanced">Mode avancé</a>
+      <button class="btn-quiet" type="button" data-action="ask-quit">Quitter</button>
+    </nav>
+    <span class="pill-live" id="livePill" hidden>Guidage en cours</span>
+  </header>
+
+  <div class="banner" id="engineBanner" role="alert" hidden>
+    <span id="engineText"></span>
+    <button class="btn ghost" type="button" data-action="restart_engine">Relancer</button>
+  </div>
+
+  <main id="main">
+    <!-- ======================================================= préparation -->
+    <section data-view="prep" class="split" hidden>
+      <div class="rings">
+        <span class="ring r1"></span><span class="ring r2"></span>
+        <div class="progress-ring" id="prepRing" role="progressbar" aria-label="Préparation de VisionAId" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div class="core"><span class="big" id="prepPct">0 %</span><span class="muted" style="color:#c9d2e3" id="prepLeft"></span></div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="col" style="gap:12px">
+          <h1>VisionAId se prépare.</h1>
+          <p class="lead">Une seule fois, au premier lancement. Gardez l'ordinateur allumé et connecté à Internet.</p>
+        </div>
+        <ul class="checks" id="prepSteps"></ul>
+        <p class="muted" id="prepNote">Si la connexion coupe, la préparation reprend là où elle s'était arrêtée. Ensuite, tout reste sur cet ordinateur.</p>
+        <div id="prepError" hidden class="col" style="gap:12px">
+          <p class="note" role="alert" id="prepErrorText"></p>
+          <button class="btn" type="button" data-action="retry_prepare">Réessayer</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================= connecter le téléphone -->
+    <section data-view="phone" class="split" hidden>
+      <div class="rings">
+        <span class="ring r1"></span><span class="ring r2"></span><span class="ring r3" id="phoneRing"></span>
+        <div class="qr-wrap">
+          <div class="qr-card" role="img" aria-label="Code QR à scanner avec le téléphone"><img id="qr" alt=""></div>
+          <div class="status" id="phoneStatus" aria-live="polite">En attente du téléphone…</div>
+        </div>
+      </div>
+      <div class="col">
+        <h1>Connecter le téléphone.</h1>
+        <ol class="numbered">
+          <li><span>Mettez le téléphone sur le même Wi-Fi que cet ordinateur.</span></li>
+          <li><span>Visez le code avec l'appareil photo du téléphone, puis touchez le lien qui apparaît.</span></li>
+          <li><span>Le navigateur indique que la connexion n'est pas privée : touchez <strong>Afficher les détails</strong> (iPhone) ou <strong>Paramètres avancés</strong> (Android), puis continuez vers le site. La connexion reste chez vous, entre le téléphone et cet ordinateur.</span></li>
+          <li><span>Touchez <strong>Démarrer</strong> sur le téléphone, puis autorisez la caméra et le micro.</span></li>
+        </ol>
+        <p class="muted" style="margin:0">Sans appareil photo, tapez dans le navigateur du téléphone : <strong style="color:var(--ink)" id="phoneUrl"></strong></p>
+        <div class="links" style="align-items:center">
+          <button class="btn" type="button" id="phoneNext" data-action="phone-next">Continuer</button>
+          <a href="#back" id="phoneBack" data-action="back">Retour</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================= tester le casque -->
+    <section data-view="headset" class="split" hidden>
+      <div class="rings">
+        <span class="ring r1"></span><span class="ring r2"></span><span class="ring r3"></span>
+        <span class="chip front" data-dir="2" aria-hidden="true">Devant</span>
+        <span class="chip left" data-dir="0" aria-hidden="true">Gauche</span>
+        <span class="chip right" data-dir="1" aria-hidden="true">Droite</span>
+        <button class="core" type="button" data-action="test_sound" id="testBtn">
+          <svg width="52" height="52" fill="#f2a541" aria-hidden="true"><use href="#play"></use></svg>
+          <span class="label" id="testLabel">Jouer<br>le test</span>
+        </button>
+      </div>
+      <div class="col">
+        <div class="col" style="gap:12px">
+          <h1>Tester le casque.</h1>
+          <p class="lead">Branchez le casque sur le téléphone et mettez-le. Le test joue un son à gauche, à droite, puis devant.</p>
+          <p aria-live="polite" style="margin:0;min-height:1.5em;font-weight:700" id="testLive"></p>
+        </div>
+        <fieldset>
+          <legend style="font:600 21px var(--display)">Les trois sons venaient-ils du bon côté&#160;?</legend>
+          <div class="seg">
+            <button type="button" class="on" data-action="headset-ok">Oui, tout est bon</button>
+            <button type="button" data-action="headset-help" aria-expanded="false" id="helpToggle">Non, ça ne va pas</button>
+          </div>
+        </fieldset>
+        <ul id="headsetHelp" hidden style="margin:0;padding:16px 0 0;list-style:none;display:flex;flex-direction:column;gap:12px;border-top:2px solid var(--ink)">
+          <li><strong>Gauche et droite inversées :</strong> le casque est peut-être à l'envers (repères L et R).</li>
+          <li><strong>Le même son des deux côtés :</strong> désactivez l'audio mono du téléphone (iPhone : Réglages › Accessibilité › Audio/Visuel ; Android : Paramètres › Accessibilité › Audio).</li>
+          <li><strong>Aucun son :</strong> montez le volume du téléphone et vérifiez la connexion du casque.</li>
+        </ul>
+        <a href="#back" data-action="back" style="align-self:flex-start">Retour</a>
+      </div>
+    </section>
+
+    <!-- ======================================================= accueil -->
+    <section data-view="home" class="split" hidden>
+      <div class="rings">
+        <span class="ring r1"></span><span class="ring r2"></span><span class="ring r3"></span>
+        <button class="core" type="button" data-action="start" id="startBtn">
+          <svg width="56" height="56" fill="#f2a541" aria-hidden="true"><use href="#play"></use></svg>
+          <span class="label">Démarrer<br>le guidage</span>
+        </button>
+      </div>
+      <div class="col" style="gap:28px">
+        <h1 id="homeTitle">Tout est prêt.</h1>
+        <ul class="checks" aria-label="Appareils">
+          <li id="chkPhone"><span class="dot todo" aria-hidden="true"></span><span>Téléphone non connecté</span></li>
+          <li id="chkHeadset"><span class="dot todo" aria-hidden="true"></span><span>Casque à tester</span></li>
+          <li><span class="dot todo" aria-hidden="true"></span><span class="muted">Téléphone fixé sur le torse, écran vers soi</span></li>
+        </ul>
+        <fieldset>
+          <legend>L'objet à trouver est choisi</legend>
+          <div class="seg" role="radiogroup">
+            <label id="modeVoice"><input type="radio" name="mode" value="voice">à la voix</label>
+            <label id="modeHere"><input type="radio" name="mode" value="here">sur cet ordinateur</label>
+          </div>
+          <p class="muted" style="margin:0" id="voiceHint">Sur le téléphone : appuyer sur Parler et dire «&#160;je cherche ma gourde&#160;».</p>
+          <div class="objects" id="objects" role="group" aria-label="Objet à trouver" hidden>
+            <button type="button" data-object="gourde" aria-pressed="true">Ma gourde</button>
+            <button type="button" data-object="cles" aria-pressed="false">Mes clés</button>
+          </div>
+        </fieldset>
+        <div class="links">
+          <a href="#headset" data-action="go-headset">Rejouer le test du casque</a>
+          <a href="#phone" data-action="go-phone">Reconnecter le téléphone</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================= guidage en cours -->
+    <section data-view="guide" class="split" hidden>
+      <div class="rings" aria-live="polite">
+        <span class="ring r1"></span><span class="ring r2"></span>
+        <span class="ring r3" style="border-color:rgba(201,122,18,0.35)"></span>
+        <span class="dir" id="dirDot" aria-hidden="true" style="opacity:0"></span>
+        <div class="core" style="box-shadow:none">
+          <span class="big" id="gBig">…</span>
+          <span class="sub" id="gSmall"></span>
+        </div>
+      </div>
+      <div class="col">
+        <ol class="phases" id="phases" aria-label="Étapes du guidage">
+          <li data-phase="ecoute">Écoute</li><li data-phase="recherche">Recherche</li><li data-phase="trouve">Trouvé</li><li data-phase="route">En route</li><li data-phase="arrivee">Arrivée</li>
+        </ol>
+        <div class="col" style="gap:12px">
+          <h1 id="gTitle">Qu'est-ce qu'on cherche&#160;?</h1>
+          <p class="lead" id="gDetail" style="max-width:38ch"></p>
+        </div>
+        <dl class="facts">
+          <div><dt>Demande entendue</dt><dd id="gHeard">—</dd></div>
+          <div><dt>Dernière phrase dans le casque</dt><dd id="gSpeech">—</dd></div>
+        </dl>
+        <button class="btn outline" type="button" data-action="stop" style="align-self:flex-start">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="#16233b" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"></rect></svg>
+          Arrêter le guidage
+        </button>
+      </div>
+    </section>
+
+    <!-- ======================================================= sons -->
+    <section data-view="sounds" class="narrow" hidden>
+      <div class="col" style="gap:12px">
+        <h1>Les sons.</h1>
+        <p class="lead" style="max-width:44ch">Réglez chaque son pour qu'il soit confortable. Le bouton lecture le joue tout de suite dans le casque.</p>
+      </div>
+      <ul class="rows" id="soundRows"></ul>
+      <div class="links" style="justify-content:space-between;align-items:center">
+        <p aria-live="polite" style="margin:0;color:var(--ok);font-weight:700" id="soundSaved"></p>
+        <button class="btn ghost" type="button" data-action="reset-volumes">Rétablir les réglages d'origine</button>
+      </div>
+    </section>
+
+    <!-- ======================================================= mode avancé -->
+    <section data-view="advanced" class="narrow" hidden>
+      <div class="links" style="justify-content:space-between;align-items:flex-end;gap:24px">
+        <div class="col" style="gap:12px">
+          <h1>Mode avancé.</h1>
+          <p class="lead" style="max-width:40ch">Pour l'équipe VisionAId et les testeurs. Inutile au quotidien.</p>
+        </div>
+        <div style="display:flex;align-items:center;gap:14px">
+          <span id="advLabel" style="font-weight:700">Activé</span>
+          <button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="advLabel" data-setting="advanced"></button>
+        </div>
+      </div>
+      <div id="advBody" hidden>
+        <ul class="rows">
+          <li>
+            <div class="name"><span class="t" id="vizLabel">Vue 3D pendant le guidage</span><span>Image de la caméra, carte de la pièce et chemin calculé (Rerun).</span></div>
+            <button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="vizLabel" data-setting="viz"></button>
+          </li>
+          <li style="flex-direction:column;align-items:stretch">
+            <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap">
+              <div class="name"><span class="t" id="recLabel">Enregistrer les prochaines sessions</span><span>Pour rejouer une session et comprendre un problème.</span></div>
+              <button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="recLabel" data-setting="record"></button>
+            </div>
+            <p class="note">Les enregistrements contiennent les images de la caméra, donc l'intérieur du domicile. Ils restent sur cet ordinateur. Prévenez la personne avant d'activer.</p>
+            <div class="links" style="align-items:center"><button class="btn ghost" type="button" data-action="open_sessions">Ouvrir le dossier des enregistrements</button></div>
+          </li>
+          <li style="flex-direction:column;align-items:stretch">
+            <div id="restartNote" class="banner" hidden>
+              <span>La vue 3D et l'enregistrement changent au prochain démarrage du guidage.</span>
+              <button class="btn ghost" type="button" data-action="restart_engine">Redémarrer maintenant</button>
+            </div>
+            <div class="name"><span class="t">Signaler un problème</span><span>Le rapport contient la version, l'ordinateur et l'état du guidage, sans aucune image.</span></div>
+            <div class="links" style="align-items:center">
+              <button class="btn" type="button" data-action="copy-report" style="padding:12px 20px;font-size:18px">Copier le rapport</button>
+              <span aria-live="polite" style="color:var(--ok);font-weight:700" id="copied"></span>
+            </div>
+            <textarea class="report" id="report" readonly aria-label="Rapport de diagnostic" hidden></textarea>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ======================================================= aide -->
+    <section data-view="help" class="narrow" hidden style="max-width:900px;gap:40px">
+      <h1>Aide.</h1>
+      <section class="col" style="gap:20px" aria-labelledby="useTitle">
+        <h2 id="useTitle">Utiliser VisionAId</h2>
+        <ol class="howto">
+          <li><span>Fixer le téléphone sur le torse, écran vers soi.</span></li>
+          <li><span>Mettre le casque et toucher <strong>Démarrer</strong> sur le téléphone.</span></li>
+          <li><span>Appuyer sur <strong>Parler</strong> et dire «&#160;je cherche ma gourde&#160;».</span></li>
+          <li><span>Suivre le son. Dire «&#160;stop&#160;» pour arrêter.</span></li>
+        </ol>
+      </section>
+      <section class="col" style="gap:16px" aria-labelledby="fixTitle">
+        <h2 id="fixTitle">Un problème&#160;?</h2>
+        <div>
+          <details><summary>Le téléphone n'arrive pas à se connecter</summary><ul>
+            <li>Le téléphone et l'ordinateur doivent être sur le même Wi-Fi.</li>
+            <li>Si une adresse ne marche pas, essayez une autre adresse affichée sous le code QR.</li>
+            <li>Sous Windows, autorisez VisionAId quand le pare-feu le demande.</li>
+            <li><a href="#phone" data-action="go-phone">Reconnecter le téléphone</a></li></ul></details>
+          <details><summary>Pas de son, ou le son vient du mauvais côté</summary><ul>
+            <li>Vérifiez le volume du téléphone et la connexion du casque.</li>
+            <li>Désactivez l'audio mono du téléphone (iPhone : Réglages › Accessibilité › Audio/Visuel ; Android : Paramètres › Accessibilité › Audio).</li>
+            <li>Vérifiez que le casque n'est pas à l'envers (repères L et R).</li>
+            <li><a href="#headset" data-action="go-headset">Rejouer le test du casque</a></li></ul></details>
+          <details><summary>VisionAId ne comprend pas la demande</summary><ul>
+            <li>Parlez après le bip, dans un endroit calme.</li>
+            <li>Pour l'instant, VisionAId cherche la gourde et les clés : «&#160;je cherche ma gourde&#160;», «&#160;où sont mes clés&#160;».</li></ul></details>
+          <details><summary>L'objet n'est pas trouvé</summary><ul>
+            <li>Tournez lentement sur vous-même : la caméra doit voir l'objet.</li>
+            <li>Allumez la lumière : dans le noir, la caméra voit mal.</li>
+            <li>Vérifiez que rien ne cache la caméra du téléphone.</li></ul></details>
+        </div>
+      </section>
+      <section class="privacy" aria-labelledby="privTitle">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#f2a541" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg>
+        <div><h2 id="privTitle">Tout reste chez vous</h2>
+          <p>Le calcul se fait sur cet ordinateur. Les images de la caméra et la voix ne sont jamais envoyées sur Internet. Rien n'est enregistré, sauf si l'enregistrement est activé dans le mode avancé.</p></div>
+      </section>
+      <footer class="links" style="justify-content:space-between;color:var(--muted)">
+        <span>VisionAId version 0.1.0</span>
+        <span>Polices Lexend et Atkinson Hyperlegible : licence SIL OFL 1.1</span>
+      </footer>
+    </section>
+  </main>
+</div>
+
+<div class="modal" id="quitModal" hidden>
+  <div role="dialog" aria-modal="true" aria-labelledby="quitTitle">
+    <h2 id="quitTitle">Quitter VisionAId&#160;?</h2>
+    <p class="muted" style="margin:0">Le téléphone sera déconnecté. Pour relancer VisionAId, ouvrez-le depuis vos applications.</p>
+    <div class="two">
+      <button class="btn ghost" type="button" data-action="cancel-quit">Annuler</button>
+      <button class="btn" type="button" data-action="quit">Quitter</button>
+    </div>
+  </div>
+</div>
+<div class="modal" id="closedModal" hidden>
+  <div role="dialog" aria-modal="true" aria-labelledby="closedTitle">
+    <h2 id="closedTitle">VisionAId est fermé.</h2>
+    <p class="muted" style="margin:0">Vous pouvez fermer cette page.</p>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -10,6 +10,22 @@ Toutes les commandes se lancent depuis le dossier du projet (`~/VisionAid`). `Ct
 
 ---
 
+## 0. Application (fenêtre VisionAId)
+
+La façon la plus simple : tout se fait à la souris dans une fenêtre, pas besoin des options ci-dessous.
+```bash
+uv run visionaid
+```
+Préparation (premier lancement), connexion du téléphone par code QR, test du casque, puis **Démarrer le guidage**. Hauteur du téléphone fixée à 1,50 m. Mode voix par défaut (la personne dit ce qu'elle cherche) ; l'objet peut aussi être choisi sur l'ordinateur.
+
+Sans téléphone, pour une démonstration ou pour tester l'interface :
+```bash
+uv run visionaid --fake-phone --stub-models --browser
+```
+`--browser` ouvre l'interface dans le navigateur au lieu d'une fenêtre. Les réglages (volumes, mode avancé…) sont gardés dans `.cache/app/settings.json`.
+
+---
+
 ## 1. Direct avec l'iPhone
 
 ### Direct + visualisation Rerun

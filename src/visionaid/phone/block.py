@@ -188,7 +188,13 @@ class PhoneSourceBlock:
             https_port=raw.get("_phone_https_port"),
             http_port=raw.get("_phone_http_port"),
             meta=raw.get("_phone_meta"),
+            on_control=self._on_control,
+            control_token=raw.get("_control_token"),
         )
+        # réglages de l'application de l'ordinateur, connus dès le démarrage
+        if raw.get("_levels"):
+            self.server.levels = {str(k): float(v) for k, v in raw["_levels"].items()}
+        self.server.advanced = bool(raw.get("_advanced", False))
         t = raw.get("tts") or {}
         self.server.voice = {
             "mode": mode,
@@ -242,6 +248,20 @@ class PhoneSourceBlock:
             overwritten=self.inbox.n_overwritten,
         )
         return s
+
+    def _on_control(self, obj: dict) -> None:
+        """Démarrer / arrêter depuis l'application de l'ordinateur (fil du serveur).
+
+        Démarrer avec un objet choisi sur l'ordinateur = la même demande que si la personne
+        l'avait dite ; à la voix, rien à faire ici : le téléphone propose « Parler ».
+        Arrêter = la demande « stop » (silence et phrase de fin, comme à la voix).
+        """
+        if self.desk is None:
+            return
+        if obj.get("action") == "start" and obj.get("text"):
+            self.desk.submit([str(obj["text"])], source="ordinateur")
+        elif obj.get("action") == "stop" and self.desk.current is not None:
+            self.desk.submit(["stop"], source="ordinateur")
 
     def _reply(self, obj: dict) -> None:
         self.server.send_json(obj)

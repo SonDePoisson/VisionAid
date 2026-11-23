@@ -10,8 +10,15 @@ const ui = {
   age: $("age"), bubble: $("bubble"), levelText: $("levelText"), log: $("log"),
   notes: $("notes"), sendNotes: $("sendNotes"),
   sound: $("sound"), volume: $("volume"), volumeOut: $("volumeOut"), testSound: $("testSound"),
-  voiceBox: $("voiceBox"), talk: $("talk"), heard: $("heard"), typed: $("typed"), sendTyped: $("sendTyped"),
+  talk: $("talk"), talkLabel: $("talkLabel"), talkHint: $("talkHint"), heard: $("heard"),
+  typed: $("typed"), sendTyped: $("sendTyped"),
+  connPill: $("connPill"), levelPill: $("levelPill"), advanced: $("advanced"),
+  guideTalk: $("guideTalk"), stopGuide: $("stopGuide"), gTitle: $("gTitle"), gDist: $("gDist"),
+  gSide: $("gSide"), dirDot: $("dirDot"), phasePill: $("phasePill"),
+  screens: { connect: $("screenConnect"), talk: $("screenTalk"), guide: $("screenGuide") },
 };
+// Objets connus : nom dit dans les titres (le PC envoie le nom de la fiche).
+const OBJECTS = { gourde: "la gourde", cles: "les clés" };
 const audio = window.guideAudio;
 audio.onStatus = (text, cls) => { ui.sound.textContent = text; ui.sound.className = cls || ""; };
 
@@ -27,7 +34,69 @@ const state = {
   pings: new Map(), lastRtt: null, lastRttId: null, reconnectDelay: 500, timers: [], hasImu: false,
   canvas: document.createElement("canvas"),
   voice: null, greeted: false, listening: null, spokenIds: new Set(),
+  screen: "connect", controlled: false, target: "", guideState: "",
 };
+
+// ------------------------------------------------------------------ écrans
+// connexion (Démarrer) → Parler → guidage (distance et direction) ; un seul visible à la fois.
+function showScreen(name) {
+  if (state.screen === name) return;
+  state.screen = name;
+  for (const [k, el] of Object.entries(ui.screens)) el.hidden = k !== name;
+  const h1 = ui.screens[name].querySelector("h1");
+  if (h1) { h1.setAttribute("tabindex", "-1"); h1.focus({ preventScroll: true }); }
+}
+
+function setConn(text, cls) {
+  ui.connPill.textContent = text;
+  ui.connPill.className = "pill" + (cls ? " " + cls : "");
+}
+
+function setAdvanced(on) {
+  ui.advanced.hidden = !on;
+  ui.video.classList.toggle("offscreen", !on);
+}
+
+// Consigne du PC → écran de guidage (titres courts : la voix dit le détail dans le casque).
+function updateGuide(m) {
+  const st = m.state || "IDLE";
+  if (!state.running) return;
+  if (st === "IDLE" || m.mode === "silent" && st !== "ARRIVED" && m.dist === null) {
+    if (state.screen === "guide") showScreen("talk");
+    state.guideState = st;
+    return;
+  }
+  showScreen("guide");
+  const obj = OBJECTS[state.target] || "l'objet";
+  const searching = st === "SEARCHING";
+  const titles = {
+    SEARCHING: [`Je cherche ${obj}.`, "Recherche"],
+    NAVIGATING: [`Vers ${obj}.`, "En route"],
+    APPROACHING: [`Presque arrivé.`, "En route"],
+    ARRIVED: ["Arrivé.", "Arrivée"],
+    OBSTACLE_ALERT: ["Obstacle proche.", "Attention"],
+    TRACKING_LOST: ["Arrêtez-vous un instant.", "Repérage"],
+  };
+  const [title, pill] = titles[st] || [`Vers ${obj}.`, "En route"];
+  if (st !== state.guideState) {
+    ui.gTitle.textContent = title;
+    ui.phasePill.textContent = pill;
+    state.guideState = st;
+  }
+  const d = Number.isFinite(m.dist) && !searching ? m.dist : null;
+  ui.gDist.textContent = d === null ? (searching ? "…" : "–") : `${d.toFixed(1).replace(".", ",")} m`;
+  const az = Number.isFinite(m.az) ? m.az : null;
+  if (az === null || searching) {
+    ui.dirDot.style.opacity = "0";
+    ui.gSide.textContent = searching ? "tournez lentement" : "";
+  } else {
+    const deg = -az * 180 / Math.PI; // azimut positif à gauche ; à l'écran, gauche = angle négatif
+    ui.dirDot.style.opacity = "1";
+    ui.dirDot.style.transform = `rotate(${deg.toFixed(1)}deg)`;
+    const a = Math.abs(deg), side = deg < 0 ? "gauche" : "droite";
+    ui.gSide.textContent = a <= 10 ? "en face" : a <= 45 ? `légèrement à ${side}` : a <= 120 ? `à ${side}` : `derrière, à ${side}`;
+  }
+}
 
 // Horloge du téléphone en secondes, commune aux images et aux capteurs.
 const nowS = (perfMs) => (performance.timeOrigin + (perfMs ?? performance.now())) / 1000;
@@ -45,7 +114,7 @@ function setStatus(text, cls) {
 // ------------------------------------------------------------------ démarrage
 async function start() {
   if (!window.isSecureContext) {
-    setStatus("Page non sécurisée : ouvrez l'adresse en https:// (certificat à installer, voir le PC).", "err");
+    setStatus("Page non sécurisée : ouvrez l'adresse en https://, comme indiqué sur l'ordinateur.", "err");
     return;
   }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -96,6 +165,7 @@ async function start() {
   document.addEventListener("visibilitychange", onVisibility);
 
   state.running = true;
+  showScreen("talk");
   audio.start();
   ui.stop.disabled = false;
   ui.capture.disabled = false;
@@ -123,7 +193,9 @@ function stop() {
   ui.start.disabled = false;
   ui.stop.disabled = true;
   ui.capture.disabled = true;
-  setStatus("Arrêté.", "");
+  state.greeted = false;
+  showScreen("connect");
+  setStatus("Arrêté. Touchez Démarrer pour reprendre.", "");
 }
 
 async function requestWakeLock() {
@@ -149,7 +221,8 @@ function connect() {
   const ws = new WebSocket(`wss://${location.host}/ws`);
   ws.binaryType = "arraybuffer";
   state.ws = ws;
-  setStatus("Connexion au PC…", "warn");
+  setStatus("Connexion à l'ordinateur…", "warn");
+  setConn("Connexion…", "");
   ws.onopen = () => {
     state.reconnectDelay = 500;
     state.waitingAck = false;
@@ -165,10 +238,29 @@ function connect() {
     if (m.type === "welcome") {
       for (const k of Object.keys(cfg)) if (m[k] !== undefined && m[k] !== null) cfg[k] = m[k];
       setStatus(m.session ? `Connecté — enregistrement « ${m.session} »` : "Connecté", "ok");
+      setConn("Connecté", "ok");
+      state.controlled = !!m.controlled;
+      audio.setLevels(m.levels);
+      setAdvanced(!!m.advanced);
       audio.configure(m.audio).then(() => { ui.testSound.disabled = !audio.ready; });
       onVoiceSettings(m.voice);
     } else if (m.type === "sound") {
       audio.onSound(m);
+      updateGuide(m);
+    } else if (m.type === "test_sound") {
+      audio.unlock();
+      if (audio.test()) log("Test du son demandé par l'ordinateur.");
+    } else if (m.type === "preview") {
+      audio.preview(m.sound);
+    } else if (m.type === "levels") {
+      audio.setLevels(m.levels);
+    } else if (m.type === "advanced") {
+      setAdvanced(!!m.on);
+    } else if (m.type === "guide") {
+      // guidage lancé depuis l'ordinateur, à la voix : on invite à parler
+      if (m.on && m.mode !== "here" && state.voice && state.voice.mode === "stt") {
+        audio.speak("Appuie sur le grand bouton Parler, puis dis ce que tu cherches.", false);
+      }
     } else if (m.type === "speech") {
       if (!state.spokenIds.has(m.id)) {
         state.spokenIds.add(m.id);
@@ -177,6 +269,7 @@ function connect() {
       }
     } else if (m.type === "heard") {
       ui.heard.textContent = m.text ? `Compris : « ${m.text} »` : "Rien entendu";
+      if (m.action === "search" && m.target) state.target = m.target;
       log(`Demande : « ${m.text} » → ${m.action}${m.target ? " (" + m.target + ")" : ""}`);
     } else if (m.type === "ack") {
       state.waitingAck = false;
@@ -201,6 +294,7 @@ function connect() {
     if (state.ws === ws) state.ws = null;
     if (!state.running) return;
     setStatus(`Connexion perdue, nouvelle tentative dans ${(state.reconnectDelay / 1000).toFixed(1)} s…`, "warn");
+    setConn("Connexion perdue…", "warn");
     setTimeout(connect, state.reconnectDelay);
     state.reconnectDelay = Math.min(state.reconnectDelay * 2, 5000);
   };
@@ -248,7 +342,10 @@ function showLevel(ax, ay, az) {
   const x = Math.max(-45, Math.min(45, roll));
   ui.bubble.style.left = `calc(${50 + x}% - 14px)`;
   const ok = Math.abs(roll) < 10 && Math.abs(pitch) < 15;
-  ui.bubble.style.background = ok ? "var(--ok)" : "var(--warn)";
+  ui.bubble.style.background = ok ? "var(--ok)" : "var(--gold-dark)";
+  ui.levelPill.hidden = false;
+  ui.levelPill.textContent = ok ? "Téléphone bien droit" : "Redressez le téléphone";
+  ui.levelPill.className = "pill " + (ok ? "ok" : "warn");
   ui.levelText.textContent = `Inclinaison : gauche/droite ${roll.toFixed(0)}°, avant/arrière ${pitch.toFixed(0)}°` +
     (ok ? " — bien placé" : " — redressez le téléphone");
 }
@@ -320,9 +417,12 @@ function onVoiceSettings(v) {
   state.voice = v || null;
   if (v) { audio.voiceLang = v.lang || "fr-FR"; audio.voiceRate = v.rate || 1; }
   const stt = !!(v && v.mode === "stt");
-  ui.voiceBox.hidden = !stt;
   ui.talk.disabled = !stt;
-  if (!state.greeted && v) {
+  ui.guideTalk.disabled = !stt;
+  ui.talkHint.hidden = !stt;
+  if (!stt && v && v.target) ui.heard.textContent = `Objet cherché : ${v.target}`;
+  // seul (sans l'application de l'ordinateur), le téléphone invite à parler dès la connexion
+  if (!state.greeted && v && !state.controlled) {
     state.greeted = true;
     if (stt) audio.speak("Appuie sur le grand bouton Parler, puis dis ce que tu cherches.", false);
   }
@@ -340,7 +440,9 @@ function talk() {
 function setListening(obj) {
   state.listening = obj;
   ui.talk.classList.toggle("listening", !!obj);
-  ui.talk.textContent = obj ? "⏹ J'écoute… (appuie pour finir)" : "🎤 Parler";
+  ui.guideTalk.classList.toggle("listening", !!obj);
+  ui.talkLabel.textContent = obj ? "J'écoute…" : "Parler";
+  ui.talk.setAttribute("aria-label", obj ? "J'écoute : toucher pour finir" : "Parler : dire l'objet cherché");
 }
 
 function recognize(SR) {
@@ -451,6 +553,13 @@ function sendTyped() {
 // ------------------------------------------------------------------ boutons
 ui.start.addEventListener("click", start);
 ui.talk.addEventListener("click", talk);
+ui.guideTalk.addEventListener("click", talk);
+ui.stopGuide.addEventListener("click", () => {
+  audio.unlock();
+  audio.cancelSpeech();
+  send({ type: "command", text: "stop", source: "bouton" });
+  showScreen("talk");
+});
 ui.sendTyped.addEventListener("click", sendTyped);
 ui.typed.addEventListener("keydown", (e) => { if (e.key === "Enter") sendTyped(); });
 ui.stop.addEventListener("click", stop);

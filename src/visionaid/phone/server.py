@@ -39,6 +39,9 @@ from visionaid.utils.logging import get_logger
 
 log = get_logger("phone")
 WEB_DIR = Path(__file__).parent / "web"
+FONTS_DIR = (
+    Path(__file__).parents[1] / "app" / "web" / "fonts"
+)  # polices partagées avec l'application
 
 
 @dataclass
@@ -95,8 +98,18 @@ class PhoneServer:
         http_port: int | None = None,
         host: str | None = None,
         meta: dict | None = None,
+        on_control: Callable[[dict], None] | None = None,
+        control_token: str | None = None,
     ) -> None:
         self.cfg = cfg
+        # Pilotage par l'application de l'ordinateur (`visionaid.app`) : réservé à la boucle
+        # locale et protégé par un jeton ; sans jeton, les routes /control sont refusées.
+        self.on_control = on_control
+        self.control_token = control_token
+        self.levels: dict | None = None  # volumes réglés dans l'application (par son, en dB)
+        self.advanced = False  # mode avancé : outils de test affichés sur le téléphone
+        self.guide = False  # guidage demandé depuis l'ordinateur
+        self.live: dict[str, Any] = {"sound": None, "speech": None, "heard": None}
         pc = cfg.phone
         h = host if host is not None else pc.host
         # « auto » / vide : toutes les interfaces en IPv4 ET IPv6 (réseaux IPv6 seul)
@@ -190,6 +203,9 @@ class PhoneServer:
         app.router.add_get("/calib/board", self._board)
         app.router.add_get("/ca.crt", self._ca)
         app.router.add_static("/static/", WEB_DIR)
+        app.router.add_static("/fonts/", FONTS_DIR)
+        app.router.add_post("/control", self._control)
+        app.router.add_get("/control/state", self._control_state)
         sounds = self._sounds_dir()
         if sounds is not None:
             app.router.add_static("/sounds/", sounds)
@@ -362,12 +378,15 @@ class PhoneServer:
             "obstacle_db": round(float(cmd.obstacle_db), 2),
             "event": cmd.event,
         }
+        self.live["sound"] = dict(msg, wall=time.time())
         asyncio.run_coroutine_threadsafe(self._send(ws, msg), loop)
         self.stats.n_sound += 1
         return True
 
     def send_json(self, obj: dict) -> bool:
         """Envoie un message JSON au téléphone (appelable depuis n'importe quel thread)."""
+        if obj.get("type") == "heard":
+            self.live["heard"] = dict(obj, wall=time.time())
         ws, loop = self._ws, self._loop
         if ws is None or ws.closed or loop is None:
             return False
@@ -377,6 +396,7 @@ class PhoneServer:
     def send_speech(self, sid: int, text: str, duck: bool = False) -> bool:
         """Phrase à dire par le téléphone (synthèse vocale du navigateur, dans le casque)."""
         ok = self.send_json({"type": "speech", "id": int(sid), "text": text, "duck": bool(duck)})
+        self.live["speech"] = {"id": int(sid), "text": text, "wall": time.time()}
         if ok:
             self.stats.n_speech += 1
         return ok
@@ -387,6 +407,10 @@ class PhoneServer:
             "voice": self.voice,
             "audio": self._audio_settings(),
             "type": "welcome",
+            "levels": self.levels,
+            "advanced": self.advanced,
+            "guide": self.guide,
+            "controlled": bool(self.control_token),  # piloté par l'application de l'ordinateur
             "protocol": PROTOCOL_VERSION,
             "session": self.recorder.dir.name if self.recorder else None,
             "max_fps": float(pc.max_fps),
@@ -506,6 +530,66 @@ class PhoneServer:
                     "recording": self.recorder is not None,
                 },
             )
+
+    # ------------------------------------------------------------------ pilotage (ordinateur)
+    def _control_allowed(self, request: web.Request, token: str | None) -> bool:
+        if not self.control_token or token != self.control_token:
+            return False
+        return (request.remote or "") in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+
+    async def _control(self, request: web.Request) -> web.Response:
+        try:
+            obj = await request.json()
+        except (ValueError, TypeError):
+            return web.json_response({"ok": False, "error": "JSON attendu"}, status=400)
+        if not isinstance(obj, dict) or not self._control_allowed(request, obj.get("token")):
+            return web.json_response({"ok": False}, status=403)
+        return web.json_response({"ok": True, "sent": self.control(obj)})
+
+    def control(self, obj: dict) -> bool:
+        """Action demandée par l'application de l'ordinateur ; True si transmise au téléphone."""
+        action = obj.get("action")
+        if action == "test_sound":
+            return self.send_json({"type": "test_sound"})
+        if action == "preview":
+            return self.send_json({"type": "preview", "sound": str(obj.get("sound", ""))})
+        if action == "levels":
+            self.levels = {str(k): float(v) for k, v in (obj.get("levels") or {}).items()}
+            return self.send_json({"type": "levels", "levels": self.levels})
+        if action == "advanced":
+            self.advanced = bool(obj.get("on"))
+            return self.send_json({"type": "advanced", "on": self.advanced})
+        if action in ("start", "stop"):
+            self.guide = action == "start"
+            if self.on_control is not None:
+                self.on_control(obj)
+            return self.send_json({"type": "guide", "on": self.guide, "mode": obj.get("mode")})
+        return False
+
+    async def _control_state(self, request: web.Request) -> web.Response:
+        if not self._control_allowed(request, request.query.get("token")):
+            return web.json_response({"ok": False}, status=403)
+        return web.json_response(self.control_state())
+
+    def connected(self) -> bool:
+        ws = self._ws
+        return ws is not None and not ws.closed and bool(self.stats.last_hello)
+
+    def control_state(self) -> dict[str, Any]:
+        """État lu par l'application de l'ordinateur (quelques fois par seconde)."""
+        c = self.clock.estimate()
+        return {
+            "ok": True,
+            "connected": self.connected(),
+            "fps": round(self.stats.rate(self.stats.frame_times), 1),
+            "imu_hz": round(self.stats.rate(self.stats.imu_times), 1),
+            "rtt_ms": round(c.rtt * 1e3, 1) if c.rtt else None,
+            "n_frames": self.stats.n_frames,
+            "guide": self.guide,
+            "advanced": self.advanced,
+            "now": time.time(),
+            **self.live,
+        }
 
     # ------------------------------------------------------------------ utilitaires
     def _K(self, w: int, h: int) -> np.ndarray:

@@ -1,5 +1,5 @@
 PY := uv run
-.PHONY: setup test-fast test-all lint run-offline run-realtime night calibrate inspect run-phone fake-phone run-live run-live-fake
+.PHONY: app setup test-fast test-all lint run-offline run-realtime night calibrate inspect run-phone fake-phone run-live run-live-fake
 
 setup:
 	uv sync
@@ -39,3 +39,6 @@ run-live:
 
 run-live-fake:
 	$(PY) python -m visionaid.apps.run_live --fake-phone data/video/appart.mp4 --duration 60 --rerun live
+
+app:
+	$(PY) visionaid

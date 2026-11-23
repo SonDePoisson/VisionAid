@@ -25,7 +25,11 @@ dependencies = [
     "cryptography>=50.0.2",
     "qrcode>=8.2",
     "matplotlib>=3.11.2",
+    "pywebview>=5.3",
 ]
+
+[project.scripts]
+visionaid = "visionaid.app.__main__:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-timeout>=2.3", "ruff>=0.6"]
@@ -36,6 +40,12 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/visionaid"]
+
+# Installé comme logiciel : la config et les sons préparés voyagent dans le paquet
+# (lus via `visionaid.utils.config.RESOURCES`).
+[tool.hatch.build.targets.wheel.force-include]
+"config" = "visionaid/_data/config"
+"assets/sounds/processed" = "visionaid/_data/assets/sounds/processed"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

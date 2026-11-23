@@ -28,6 +28,8 @@ class GuideAudio {
     this.voiceRate = 1;
     this.duckUntil = 0; // performance.now() : couche chemin suspendue jusqu'à cet instant
     this.speaking = 0; // phrases « duck » en cours
+    this.levels = {}; // volumes réglés sur l'ordinateur (dB, 0 = niveau d'origine), par son
+    this.loopEnv = null;
     try { this.userDb = +(localStorage.getItem("visionaid.volume_db") || 0); } catch (e) { /* stockage indisponible */ }
   }
 
@@ -63,6 +65,42 @@ class GuideAudio {
     // tampon silencieux : finit de déverrouiller la sortie audio sur iOS
     const b = this.ctx.createBuffer(1, 1, this.ctx.sampleRate), s = this.ctx.createBufferSource();
     s.buffer = b; s.connect(this.ctx.destination); s.start();
+  }
+
+  // Volumes de l'application de l'ordinateur : general, chemin, obstacles, recherche, arrivee, voix.
+  setLevels(levels) {
+    this.levels = levels || {};
+    this._applyVolume();
+    if (this.loopEnv && this.cfg) this.loopEnv.gain.value = this._gain("obstacle");
+  }
+
+  // dB du réglage de l'ordinateur pour un son du rendu (clé du rendu → nom affiché).
+  _levelDb(key) {
+    const name = { guide: "chemin", search: "recherche", arrived: "arrivee", obstacle: "obstacles" }[key];
+    const v = name ? this.levels[name] : 0;
+    return Number.isFinite(v) ? v : 0;
+  }
+
+  _gain(key) {
+    const db = (this.cfg.gains_db[key] || 0) + this._levelDb(key);
+    return db <= -120 ? 0 : Math.pow(10, db / 20);
+  }
+
+  // Écoute d'un son seul (réglages des sons sur l'ordinateur).
+  preview(name) {
+    this.unlock();
+    if (name === "voix") { this.speak("Voici la voix des annonces.", false); return; }
+    if (name === "general") { this.test(); return; }
+    if (!this.ready) return;
+    const key = { chemin: "guide", recherche: "search", arrivee: "arrived", obstacles: "obstacle" }[name];
+    if (!key) return;
+    const t = this.ctx.currentTime + 0.05;
+    if (key === "guide" || key === "search") {
+      this._setPan(0, t);
+      this._play(key, this.pan, t);
+    } else {
+      this._play(key, this.master, t, key === "obstacle" ? 1.5 : undefined);
+    }
   }
 
   // Réglages du PC (message « welcome ») : charge les sons.
@@ -117,6 +155,8 @@ class GuideAudio {
     const ss = window.speechSynthesis;
     if (!ss || !text) return;
     const u = new SpeechSynthesisUtterance(text);
+    const vdb = (Number.isFinite(this.levels.voix) ? this.levels.voix : 0) + (Number.isFinite(this.levels.general) ? this.levels.general : 0);
+    u.volume = Math.max(0, Math.min(1, Math.pow(10, vdb / 20)));
     u.lang = this.voiceLang || "fr-FR";
     u.rate = this.voiceRate || 1;
     const voices = ss.getVoices ? ss.getVoices() : [];
@@ -176,7 +216,8 @@ class GuideAudio {
   // ---------------------------------------------------------------- interne
   _applyVolume() {
     if (!this.master) return;
-    const db = (this.cfg ? this.cfg.master_gain_db : 0) + this.userDb;
+    const lv = Number.isFinite(this.levels.general) ? this.levels.general : 0;
+    const db = (this.cfg ? this.cfg.master_gain_db : 0) + this.userDb + lv;
     this.master.gain.setTargetAtTime(Math.pow(10, db / 20), this.ctx.currentTime, 0.05);
   }
 
@@ -199,21 +240,23 @@ class GuideAudio {
     const c = this.ctx, src = c.createBufferSource(), env = c.createGain();
     src.buffer = this.buffers.obstacle;
     src.loop = true; // fichier préparé bouclable sans couture
-    env.gain.value = Math.pow(10, (this.cfg.gains_db.obstacle || 0) / 20);
+    env.gain.value = this._gain("obstacle");
     src.connect(env); env.connect(this.obGain);
     src.start(c.currentTime + 0.02);
-    src.onended = () => { src.disconnect(); env.disconnect(); };
+    src.onended = () => { src.disconnect(); env.disconnect(); if (this.loopEnv === env) this.loopEnv = null; };
     this.loop = src;
+    this.loopEnv = env;
   }
 
-  _play(key, dest, when) {
+  _play(key, dest, when, duration) {
     const buf = this.buffers[key];
     if (!buf) return;
     const c = this.ctx, src = c.createBufferSource(), env = c.createGain();
     src.buffer = buf;
-    env.gain.value = Math.pow(10, (this.cfg.gains_db[key] || 0) / 20);
+    env.gain.value = this._gain(key);
     src.connect(env); env.connect(dest);
     src.start(when);
+    if (duration) src.stop(when + duration);
     src.onended = () => { src.disconnect(); env.disconnect(); };
   }
 

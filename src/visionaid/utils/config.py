@@ -4,13 +4,45 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import os
+import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_CONFIG = ROOT / "config" / "default.yaml"
+_PKG = Path(__file__).resolve().parents[1]  # dossier du paquet `visionaid`
+_REPO = _PKG.parents[1]  # racine du dépôt quand le paquet est lancé depuis les sources
+
+
+def _is_source_checkout() -> bool:
+    """Lancé depuis un clone du dépôt (`uv run …`) plutôt qu'installé comme logiciel."""
+    return (_REPO / "pyproject.toml").is_file() and (_REPO / "config" / "default.yaml").is_file()
+
+
+def user_dir() -> Path:
+    """Dossier des fichiers de l'utilisateur (sorties, cache, certificats, sessions, réglages).
+
+    `VISIONAID_HOME` le remplace ; sinon l'emplacement habituel du système.
+    """
+    env = os.environ.get("VISIONAID_HOME")
+    if env:
+        return Path(env).expanduser()
+    home = Path.home()
+    if sys.platform == "darwin":
+        return home / "Library" / "Application Support" / "VisionAId"
+    if sys.platform.startswith("win"):
+        return Path(os.environ.get("APPDATA") or home / "AppData" / "Roaming") / "VisionAId"
+    return Path(os.environ.get("XDG_DATA_HOME") or home / ".local" / "share") / "visionaid"
+
+
+SOURCE_CHECKOUT = _is_source_checkout()
+# Ressources en lecture seule (config, sons) : le dépôt, ou les données livrées dans le paquet.
+RESOURCES = _REPO if SOURCE_CHECKOUT else _PKG / "_data"
+# Fichiers écrits : le dépôt (comportement historique), ou le dossier de l'utilisateur.
+ROOT = _REPO if SOURCE_CHECKOUT else user_dir()
+DEFAULT_CONFIG = RESOURCES / "config" / "default.yaml"
+_RESOURCE_PREFIXES = ("config", "assets")
 
 
 def _to_dataclass(name: str, data: Any) -> Any:
@@ -77,9 +109,17 @@ def load_config(path: str | Path | None = None, overrides: dict | None = None) -
 
 
 def resolve_path(p: str | Path) -> Path:
-    """Chemin relatif à la racine du projet."""
+    """Chemin relatif à la racine du projet.
+
+    Installé comme logiciel : `config/…` et `assets/…` viennent du paquet (lecture seule), le
+    reste (sorties, cache, sessions, certificats) va dans le dossier de l'utilisateur.
+    """
     p = Path(p)
-    return p if p.is_absolute() else ROOT / p
+    if p.is_absolute():
+        return p
+    if p.parts and p.parts[0] in _RESOURCE_PREFIXES:
+        return RESOURCES / p
+    return ROOT / p
 
 
 def length_to_m(value, name: str = "longueur") -> float | None:
