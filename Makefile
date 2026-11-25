@@ -1,5 +1,5 @@
 PY := uv run
-.PHONY: app setup test-fast test-all lint run-offline run-realtime night calibrate inspect run-phone fake-phone run-live run-live-fake
+.PHONY: app package setup test-fast test-all lint run-offline run-realtime night calibrate inspect run-phone fake-phone run-live run-live-fake
 
 setup:
 	uv sync
@@ -42,3 +42,8 @@ run-live-fake:
 
 app:
 	$(PY) visionaid
+
+# application installable pour le système courant (.dmg / setup.exe / .AppImage dans dist/)
+package:
+	uv sync --group package
+	$(PY) python packaging/build.py

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=VisionAId
+Comment=Guidage sonore vers un objet, pour personnes malvoyantes
+Exec=VisionAId
+Icon=visionaid
+Terminal=false
+Categories=Utility;Accessibility;

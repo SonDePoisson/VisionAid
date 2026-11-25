@@ -35,6 +35,8 @@ visionaid = "visionaid.app.__main__:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-timeout>=2.3", "ruff>=0.6"]
+# fabrication des applications installables (packaging/build.py)
+package = ["pyinstaller>=6.16"]
 
 [build-system]
 requires = ["hatchling"]

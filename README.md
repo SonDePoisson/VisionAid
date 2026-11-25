@@ -41,6 +41,53 @@ installé comme logiciel, dans le dossier de l'utilisateur (`~/Library/Applicati
 sur Mac, `%APPDATA%\VisionAId` sous Windows, `~/.local/share/visionaid` sous Linux), ou dans
 `$VISIONAID_HOME` s'il est défini.
 
+## Applications installables (Mac, Windows, Linux)
+
+Le workflow GitHub Actions **Applications** (`.github/workflows/applications.yml`) fabrique :
+
+| Système | Fichier | Installation |
+|---|---|---|
+| macOS (Apple Silicon) | `VisionAId-<version>-macos-arm64.dmg` | glisser VisionAId dans Applications |
+| Windows (x64) | `VisionAId-<version>-windows-x64-setup.exe` (+ `.zip` portable) | installateur, sans droits administrateur |
+| Linux (x86_64) | `VisionAId-<version>-linux-x86_64.AppImage` (+ `.tar.gz`) | `chmod +x` puis lancer |
+
+Le lancer : onglet **Actions** → **Applications** → **Run workflow** (fichiers dans les
+« artifacts » du run), ou pousser une étiquette de version, qui crée aussi un brouillon de
+*release* avec les trois fichiers :
+
+```bash
+git tag v0.1.0
+```
+
+```bash
+git push origin v0.1.0
+```
+
+Chaque version est vérifiée avant d'être publiée (`packaging/smoke_test.py`) : chargement des
+bibliothèques lourdes (`--self-test`), puis démarrage du guidage avec un faux téléphone et arrêt.
+Les modèles (~2,6 Go) ne sont pas dans l'installateur : l'application les télécharge au premier
+lancement, comme depuis les sources. Le journal de l'application installée est dans
+`logs/visionaid.log` du dossier de l'utilisateur.
+
+Fabriquer localement, pour le système de la machine (résultat dans `dist/`) :
+
+```bash
+make package
+```
+
+Notes :
+- **macOS** : sans certificat Apple, l'application est signée « ad hoc » ; au premier lancement,
+  clic droit → **Ouvrir** (ou `xattr -dr com.apple.quarantine /Applications/VisionAId.app`).
+  Pour une application signée et notarisée, ajouter les secrets du dépôt
+  `MACOS_CERTIFICATE` (certificat Developer ID .p12 en base64), `MACOS_CERTIFICATE_PASSWORD`,
+  `MACOS_CODESIGN_IDENTITY`, `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`. Les Mac Intel ne
+  sont pas pris en charge (PyTorch ne les fournit plus).
+- **Windows** : sans signature de code, SmartScreen avertit au premier lancement (« Informations
+  complémentaires » → « Exécuter quand même »). La fenêtre utilise WebView2, présent sur
+  Windows 10/11.
+- **Linux** : PyTorch sans CUDA (calcul sur le processeur). Pas de moteur de fenêtre embarqué :
+  l'interface s'ouvre dans le navigateur par défaut.
+
 ## Développement
 
 ```bash
