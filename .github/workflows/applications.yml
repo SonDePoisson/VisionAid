@@ -34,7 +34,7 @@ jobs:
       matrix:
         include:
           # torch ne fournit plus de roues pour les Mac Intel : Apple Silicon seulement
-          - { name: macOS (Apple Silicon), os: macos-14, exe: dist/VisionAId.app/Contents/MacOS/VisionAId, files: "dist/*.dmg" }
+          - { name: macOS (Apple Silicon), os: macos-latest, exe: dist/VisionAId.app/Contents/MacOS/VisionAId, files: "dist/*.dmg" }
           - { name: Windows (x64), os: windows-2022, exe: dist/VisionAId/VisionAId.exe, files: "dist/*-setup.exe\ndist/*-portable.zip" }
           - { name: Linux (x86_64), os: ubuntu-22.04, exe: dist/VisionAId/VisionAId, files: "dist/*.AppImage\ndist/*.tar.gz" }
     env:
