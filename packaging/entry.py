@@ -27,6 +27,8 @@ def _setup_frozen_env() -> None:
     # Ultralytics ne doit pas tenter de `pip install` dans l'exécutable figé
     os.environ.setdefault("YOLO_AUTOINSTALL", "False")
     home.mkdir(parents=True, exist_ok=True)
+    for d in ("numba", "ultralytics", "matplotlib"):
+        (cache / d).mkdir(parents=True, exist_ok=True)
     # Sans console (Windows, Mac lancé depuis le Finder), stdout/stderr valent None : le journal
     # va dans un fichier, utile en cas de problème.
     if sys.stdout is None or sys.stderr is None:

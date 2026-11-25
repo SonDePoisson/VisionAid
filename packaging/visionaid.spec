@@ -68,6 +68,11 @@ binaries += [
     for ext in ("*.so", "*.pyd", "*.dll", "*.dylib")
     for f in _tv.rglob(ext)
 ]
+# Windows : roues « réparées » par delvewheel (sentencepiece, …) qui rangent leurs DLL dans un
+# dossier voisin `<paquet>.libs` que leur __init__ ajoute au chemin de recherche des DLL
+_site = _tv.parent
+for libs in _site.glob("*.libs"):
+    binaries += [(str(f), libs.name) for f in libs.iterdir() if f.is_file()]
 
 a = Analysis(  # noqa: F821
     [str(ROOT / "packaging" / "entry.py")],
