@@ -8,6 +8,14 @@ on:
   workflow_dispatch:
   push:
     tags: ["v*"]
+    # vérifie aussi toute modification du packaging, sur n'importe quelle branche
+    # (les filtres de chemins ne s'appliquent pas aux étiquettes)
+    branches: ["**"]
+    paths:
+      - "packaging/**"
+      - ".github/workflows/applications.yml"
+      - "pyproject.toml"
+      - "uv.lock"
 
 permissions:
   contents: read
