@@ -23,6 +23,7 @@ import subprocess
 import sys
 import tarfile
 import tomllib
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -77,6 +78,7 @@ def package_macos() -> Path:
     shutil.rmtree(stage, ignore_errors=True)
     stage.mkdir(parents=True)
     run(["ditto", app, stage / app.name])  # ditto garde liens et attributs étendus
+    run(["ditto", build_macos_uninstaller(), stage / UNINSTALLER_MAC])
     (stage / "Applications").symlink_to("/Applications")
     dmg.unlink(missing_ok=True)
     run(
@@ -99,6 +101,25 @@ def package_macos() -> Path:
         run(["codesign", "--force", "--sign", os.environ["MACOS_CODESIGN_IDENTITY"], dmg])
         _notarize(dmg)
     return dmg
+
+
+UNINSTALLER_MAC = f"Désinstaller {APP}.app"
+
+
+def build_macos_uninstaller() -> Path:
+    """Petite application AppleScript « Désinstaller VisionAId », livrée dans le .dmg."""
+    out = DIST / UNINSTALLER_MAC
+    shutil.rmtree(out, ignore_errors=True)
+    run(["osacompile", "-o", out, PACK / "macos" / "uninstall.applescript"])
+    icns = PACK / "build" / "icons" / "icon.icns"
+    if icns.exists():
+        shutil.copy(icns, out / "Contents" / "Resources" / "applet.icns")
+    ident = os.environ.get("MACOS_CODESIGN_IDENTITY")
+    if ident:  # Developer ID : runtime renforcé + horodatage, exigés par la notarisation
+        run(["codesign", "--force", "--options", "runtime", "--timestamp", "--sign", ident, out])
+    else:  # signature ad hoc
+        run(["codesign", "--force", "--sign", "-", out])
+    return out
 
 
 def _maybe_sign_and_notarize(app: Path) -> None:
@@ -154,6 +175,10 @@ def package_windows() -> list[Path]:
     out: list[Path] = []
     zip_base = DIST / f"{APP}-{VERSION}-windows-x64-portable"
     shutil.make_archive(str(zip_base), "zip", DIST, APP)
+    # version portable : pas de désinstalleur Windows, un script à double-cliquer à la place
+    with zipfile.ZipFile(zip_base.with_suffix(".zip"), "a") as zf:
+        bat = (PACK / "windows" / "desinstaller.bat").read_text(encoding="utf-8")
+        zf.writestr(f"{APP}/Désinstaller {APP}.bat", bat.replace("\n", "\r\n"))
     out.append(zip_base.with_suffix(".zip"))
     iscc = shutil.which("iscc") or shutil.which("ISCC")
     for cand in (

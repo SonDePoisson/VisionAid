@@ -105,8 +105,25 @@ def main(exe: str, phone_optional: bool = False, timeout: float = 240.0) -> int:
         if os.path.exists(log):
             print("---- journal ----")
             print(open(log, encoding="utf-8", errors="replace").read()[-6000:])
+    if ok:
+        ok = check_uninstall(exe, env, home)
     print("OK" if ok else "ÉCHEC", flush=True)
     return 0 if ok else 1
+
+
+def check_uninstall(exe: str, env: dict, home: str) -> bool:
+    """`--uninstall` supprime tout le dossier de l'utilisateur (modèles compris)."""
+    models = os.path.join(home, "models", "huggingface")
+    os.makedirs(models, exist_ok=True)
+    with open(os.path.join(models, "modele-factice.bin"), "wb") as fh:
+        fh.write(b"0" * 1024)
+    print("+", exe, "--uninstall", flush=True)
+    code = subprocess.run([exe, "--uninstall"], env=env, timeout=120).returncode
+    if code != 0 or os.path.exists(home):
+        print(f"désinstallation incomplète (code {code}) : {home} existe encore")
+        return False
+    print("désinstallation : dossier de l'utilisateur supprimé")
+    return True
 
 
 if __name__ == "__main__":

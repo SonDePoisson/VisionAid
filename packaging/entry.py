@@ -6,6 +6,9 @@ Différences avec `visionaid` lancé depuis les sources :
   rediriger vers le bon code au lieu de relancer l'application.
 - les caches écrits par les bibliothèques (numba, Hugging Face, torch, Ultralytics) vont dans le
   dossier de l'utilisateur : le dossier de l'application est en lecture seule (surtout sur Mac).
+- les modèles (~2,6 Go) vont dans `<dossier VisionAId>/models`, pas dans les caches partagés
+  (~/.cache/huggingface, ~/.cache/torch) : tout ce qui est lourd part à la désinstallation.
+- `--uninstall` supprime ce dossier (réglages, certificats, journal, modèles).
 """
 
 from __future__ import annotations
@@ -20,6 +23,9 @@ def _setup_frozen_env() -> None:
 
     home = user_dir()
     cache = home / ".cache"
+    # modèles téléchargés : dans le dossier de VisionAId, supprimé à la désinstallation
+    os.environ.setdefault("HF_HOME", str(home / "models" / "huggingface"))
+    os.environ.setdefault("TORCH_HOME", str(home / "models" / "torch"))
     os.environ.setdefault("NUMBA_CACHE_DIR", str(cache / "numba"))
     os.environ.setdefault("YOLO_CONFIG_DIR", str(cache / "ultralytics"))
     os.environ.setdefault("MPLCONFIGDIR", str(cache / "matplotlib"))
@@ -44,6 +50,34 @@ def _setup_frozen_env() -> None:
         os.chdir(home)
     except OSError:
         pass
+
+
+def uninstall() -> int:
+    """`--uninstall` : supprime les données de VisionAId (réglages, certificats, journal, caches,
+    modèles). Appelé par les désinstalleurs (Windows, Mac) ; sous Linux, supprime aussi l'AppImage.
+    Le programme lui-même (dossier d'installation, VisionAId.app) est retiré par le désinstalleur.
+    """
+    import shutil
+    from pathlib import Path
+
+    from visionaid.utils.config import user_dir
+
+    if sys.stdout is None:  # exécutable sans console (Windows)
+        sys.stdout = open(os.devnull, "w")  # noqa: SIM115
+    home = user_dir().resolve()
+    # garde-fou : jamais la racine, le dossier personnel, ni un dossier qui n'est pas à VisionAId
+    # (`VISIONAID_HOME` peut pointer n'importe où)
+    if home in (Path.home().resolve(), Path(home.anchor)) or "visionaid" not in home.name.lower():
+        print(f"Dossier non reconnu comme celui de VisionAId, rien supprimé : {home}")
+        return 2
+    if home.exists():
+        shutil.rmtree(home, ignore_errors=True)
+    print(("Supprimé : " if not home.exists() else "Suppression incomplète : ") + str(home))
+    appimage = os.environ.get("APPIMAGE")  # défini quand on est lancé depuis l'AppImage
+    if appimage and Path(appimage).name.lower().startswith("visionaid"):
+        Path(appimage).unlink(missing_ok=True)
+        print(f"Supprimé : {appimage}")
+    return 0 if not home.exists() else 1
 
 
 def self_test() -> int:
@@ -102,6 +136,10 @@ def self_test() -> int:
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
+    if "--uninstall" in sys.argv[1:]:
+        # avant _setup_frozen_env : ni journal ouvert ni répertoire courant dans le dossier
+        # à supprimer (Windows refuse de supprimer un dossier en cours d'utilisation)
+        raise SystemExit(uninstall())
     if getattr(sys, "frozen", False):
         _setup_frozen_env()
     if "--self-test" in sys.argv[1:]:

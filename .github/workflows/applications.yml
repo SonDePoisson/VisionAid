@@ -106,6 +106,50 @@ jobs:
       - name: Test de fumée (démarrage, guidage factice, arrêt)
         run: python packaging/smoke_test.py ${{ matrix.exe }}
 
+      # Désinstallation réelle : le programme ET les données (modèles compris) disparaissent
+      - name: Désinstallation (Windows, installateur)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem dist\*-setup.exe | Select-Object -First 1).FullName
+          Start-Process $setup -ArgumentList '/VERYSILENT','/CURRENTUSER','/SUPPRESSMSGBOXES','/NORESTART' -Wait
+          $app = "$env:LOCALAPPDATA\Programs\VisionAId"
+          if (-not (Test-Path "$app\VisionAId.exe")) { throw "VisionAId.exe absent après installation" }
+          $data = "$env:APPDATA\VisionAId"
+          New-Item -ItemType Directory -Force "$data\models" | Out-Null
+          Set-Content "$data\models\modele-factice.bin" "x"
+          Start-Process "$app\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
+          # le désinstalleur se relance depuis un dossier temporaire : on attend qu'il ait fini
+          for ($i = 0; $i -lt 60 -and ((Test-Path $app) -or (Test-Path $data)); $i++) { Start-Sleep 2 }
+          if (Test-Path $app) { throw "dossier du programme encore présent : $app" }
+          if (Test-Path $data) { throw "données encore présentes : $data" }
+          Write-Host "Désinstallation complète"
+
+      - name: Désinstallation (macOS, « Désinstaller VisionAId »)
+        if: runner.os == 'macOS'
+        run: |
+          data="$HOME/Library/Application Support/VisionAId"
+          mkdir -p ~/Applications "$data/models"
+          ditto dist/VisionAId.app ~/Applications/VisionAId.app
+          echo x > "$data/models/modele-factice.bin"
+          VISIONAID_UNINSTALL_SILENT=1 "dist/Désinstaller VisionAId.app/Contents/MacOS/applet"
+          test ! -e ~/Applications/VisionAId.app || { echo "application encore présente"; exit 1; }
+          test ! -e "$data" || { echo "données encore présentes"; exit 1; }
+          echo "Désinstallation complète"
+
+      - name: Désinstallation (Linux, AppImage --uninstall)
+        if: runner.os == 'Linux'
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          home="$RUNNER_TEMP/visionaid-home"
+          mkdir -p "$home/models" && echo x > "$home/models/modele-factice.bin"
+          cp dist/*.AppImage "$RUNNER_TEMP/VisionAId-test.AppImage"
+          VISIONAID_HOME="$home" "$RUNNER_TEMP/VisionAId-test.AppImage" --uninstall
+          test ! -e "$home" || { echo "données encore présentes"; exit 1; }
+          test ! -e "$RUNNER_TEMP/VisionAId-test.AppImage" || { echo "AppImage encore présente"; exit 1; }
+          echo "Désinstallation complète"
+
       - uses: actions/upload-artifact@v4
         with:
           name: VisionAId-${{ runner.os }}

@@ -69,6 +69,20 @@ Les modèles (~2,6 Go) ne sont pas dans l'installateur : l'application les tél�
 lancement, comme depuis les sources. Le journal de l'application installée est dans
 `logs/visionaid.log` du dossier de l'utilisateur.
 
+**Désinstaller.** Tout ce que l'application installée écrit, modèles compris, est dans un seul
+dossier de l'utilisateur : `~/Library/Application Support/VisionAId` (Mac), `%APPDATA%\VisionAId`
+(Windows), `~/.local/share/visionaid` (Linux). La désinstallation supprime le programme et ce
+dossier :
+
+| Système | Comment |
+|---|---|
+| macOS | double-cliquer **Désinstaller VisionAId** (dans le .dmg, à côté de l'application) |
+| Windows | menu Démarrer → **Désinstaller VisionAId**, ou Paramètres → Applications ; version portable : `Désinstaller VisionAId.bat` dans son dossier |
+| Linux | `./VisionAId-<version>-linux-x86_64.AppImage --uninstall` (supprime aussi l'AppImage) |
+
+Lancé depuis les sources (`uv run visionaid`), rien ne change : les modèles restent dans les caches
+habituels (`~/.cache/huggingface`, `~/.cache/torch`), partagés avec les autres outils.
+
 Fabriquer localement, pour le système de la machine (résultat dans `dist/`) :
 
 ```bash
